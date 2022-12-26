@@ -16,6 +16,7 @@
 
 
 #include "pico/stdlib.h"
+#include "tusb.h"
 
 #define FAN_P_PIN 5
 #define FAN_N_PIN 4
@@ -23,6 +24,9 @@
 
 int main()
 {
+	/* Initialize stdio over USB. */
+	stdio_init_all();
+
 	/* Push = High-Z (external pull-up) = Disabled */
 	gpio_init(FAN_P_PIN);
 	gpio_disable_pulls(FAN_P_PIN);
@@ -39,13 +43,15 @@ int main()
 
 	while (true) {
 		/* Push = High-Z (external pull-up) = Disabled */
+		fprintf(stderr, "FAN: off\n");
 		gpio_set_dir(FAN_P_PIN, GPIO_IN);
 
-		sleep_ms(1200);
+		sleep_ms(2500);
 
 		/* Push = Enabled */
+		fprintf(stderr, "FAN: on\n");
 		gpio_set_dir(FAN_P_PIN, GPIO_OUT);
 
-		sleep_ms(800);
+		sleep_ms(2500);
 	}
 }
