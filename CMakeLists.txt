@@ -2,15 +2,9 @@ cmake_minimum_required(VERSION 3.12)
 include($ENV{PICO_SDK_PATH}/pico_sdk_init.cmake)
 
 set(PICO_BOARD barbecue10)
-set(PICO_BOARD_HEADER_DIRS $ENV{PWD}/boards)
+set(PICO_BOARD_HEADER_DIRS $ENV{PWD}/src/boards)
 
 project(barbecue)
 pico_sdk_init()
 
-add_executable(barbecue barbecue.c)
-target_link_libraries(barbecue pico_stdlib)
-pico_add_extra_outputs(barbecue)
-pico_enable_stdio_usb(barbecue ENABLED)
-
-#pico_set_binary_type(barbecue no_flash)
-#pico_set_binary_type(barbecue copy_to_ram)
+add_subdirectory(src)
