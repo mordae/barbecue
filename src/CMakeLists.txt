@@ -1,5 +1,5 @@
 add_executable(barbecue main.c)
-target_link_libraries(barbecue pico_stdlib)
+target_link_libraries(barbecue pico_stdlib hardware_adc)
 pico_add_extra_outputs(barbecue)
 pico_enable_stdio_usb(barbecue ENABLED)
 

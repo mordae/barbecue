@@ -16,10 +16,83 @@
 
 
 #include "pico/stdlib.h"
+#include "hardware/adc.h"
 #include "tusb.h"
 
-#define FAN_P_PIN 5
-#define FAN_N_PIN 4
+
+static void pwm123_init(void)
+{
+	/* Push = High-Z (external pull-up) = Disabled */
+	gpio_init(PWM3_P_PIN);
+	gpio_disable_pulls(PWM3_P_PIN);
+	gpio_set_dir(PWM3_P_PIN, GPIO_IN);
+	gpio_set_drive_strength(PWM3_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PWM3_P_PIN, 0);
+
+	/* Pull = Disabled */
+	gpio_init(PWM3_N_PIN);
+	gpio_disable_pulls(PWM3_N_PIN);
+	gpio_set_dir(PWM3_N_PIN, GPIO_OUT);
+	gpio_set_drive_strength(PWM3_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PWM3_N_PIN, 0);
+
+	/* Push = High-Z (external pull-up) = Disabled */
+	gpio_init(PWM2_P_PIN);
+	gpio_disable_pulls(PWM2_P_PIN);
+	gpio_set_dir(PWM2_P_PIN, GPIO_IN);
+	gpio_set_drive_strength(PWM2_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PWM2_P_PIN, 0);
+
+	/* Pull = Disabled */
+	gpio_init(PWM2_N_PIN);
+	gpio_disable_pulls(PWM2_N_PIN);
+	gpio_set_dir(PWM2_N_PIN, GPIO_OUT);
+	gpio_set_drive_strength(PWM2_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PWM2_N_PIN, 0);
+
+	/* Push = High-Z (external pull-up) = Disabled */
+	gpio_init(PWM1_P_PIN);
+	gpio_disable_pulls(PWM1_P_PIN);
+	gpio_set_dir(PWM1_P_PIN, GPIO_IN);
+	gpio_set_drive_strength(PWM1_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PWM1_P_PIN, 0);
+
+	/* Pull = Disabled */
+	gpio_init(PWM1_N_PIN);
+	gpio_disable_pulls(PWM1_N_PIN);
+	gpio_set_dir(PWM1_N_PIN, GPIO_OUT);
+	gpio_set_drive_strength(PWM1_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PWM1_N_PIN, 0);
+}
+
+
+static void tsense_init(void)
+{
+	adc_init();
+	adc_gpio_init(TSENSE_PIN);
+}
+
+
+static void tsense_select(void)
+{
+#if TSENSE_PIN == 26
+	adc_select_input(0);
+#elif TSENSE_PIN == 27
+	adc_select_input(1);
+#elif TSENSE_PIN == 28
+	adc_select_input(2);
+#elif TSENSE_PIN == 29
+	adc_select_input(3);
+#else
+# error "Selected TSENSE_PIN is not an ADC input!"
+#endif
+}
+
+
+static float voltage_to_temp(float V)
+{
+	return 240.201 - 195.011 * V + 88.4434 * V * V - 15.8647 * V * V * V;
+}
 
 
 int main()
@@ -27,31 +100,26 @@ int main()
 	/* Initialize stdio over USB. */
 	stdio_init_all();
 
-	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(FAN_P_PIN);
-	gpio_disable_pulls(FAN_P_PIN);
-	gpio_set_dir(FAN_P_PIN, GPIO_IN);
-	gpio_set_drive_strength(FAN_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(FAN_P_PIN, 0);
+	/* Turn off all 3 PWM outputs. */
+	pwm123_init();
 
-	/* Pull = Disabled */
-	gpio_init(FAN_N_PIN);
-	gpio_disable_pulls(FAN_N_PIN);
-	gpio_set_dir(FAN_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(FAN_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(FAN_N_PIN, 0);
+	/* Initialize the temperature probe. */
+	tsense_init();
+	tsense_select();
 
 	while (true) {
-		/* Push = High-Z (external pull-up) = Disabled */
-		fprintf(stderr, "FAN: off\n");
-		gpio_set_dir(FAN_P_PIN, GPIO_IN);
+		float Vconv = 3.3 / ((1 << 12) * 256);
+		float Vtemp = 0;
 
-		sleep_ms(2500);
+		for (int i = 0; i < 256; i++)
+			Vtemp += adc_read();
 
-		/* Push = Enabled */
-		fprintf(stderr, "FAN: on\n");
-		gpio_set_dir(FAN_P_PIN, GPIO_OUT);
+		Vtemp *= Vconv;
 
-		sleep_ms(2500);
+		printf("V: %.2f mV\n", Vtemp * 1000.0);
+		printf("T: %.2f °C\n", voltage_to_temp(Vtemp));
+		printf("\n");
+
+		sleep_ms(1000);
 	}
 }
