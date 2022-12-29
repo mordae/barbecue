@@ -39,11 +39,21 @@
 #define OLED_SCL_PIN 7
 
 /* 11-pin TFT header. */
+#define TFT_SPI_DEV   spi1
 #define TFT_RST_PIN   8
 #define TFT_CS_PIN    9
-#define TFT_SCLK_PIN 10
+#define TFT_SCK_PIN  10
 #define TFT_MOSI_PIN 11
 #define TFT_RS_PIN   14
+
+/* Other TFT parameters. */
+#if !defined(TFT_WIDTH)
+# define TFT_WIDTH 176
+#endif
+
+#if !defined(TFT_HEIGHT)
+# define TFT_HEIGHT 220
+#endif
 
 /* Rotary Encoder */
 #define RE_SW_PIN 23

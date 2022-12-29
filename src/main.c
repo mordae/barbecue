@@ -15,9 +15,11 @@
  */
 
 
-#include "pico/stdlib.h"
-#include "hardware/adc.h"
-#include "tusb.h"
+#include <pico/stdlib.h>
+#include <hardware/adc.h>
+#include <tusb.h>
+
+#include "ili9225.h"
 
 
 static void pwm123_init(void)
@@ -89,9 +91,9 @@ static void tsense_select(void)
 }
 
 
-static float voltage_to_temp(float V)
+static double voltage_to_temp(double v)
 {
-	return 240.201 - 195.011 * V + 88.4434 * V * V - 15.8647 * V * V * V;
+	return 278.642 - 244.739 * v + 108.529 * v * v - 18.5223 * v * v * v;
 }
 
 
@@ -100,26 +102,50 @@ int main()
 	/* Initialize stdio over USB. */
 	stdio_init_all();
 
+#if 0
+	while (!stdio_usb_connected())
+		sleep_ms(10);
+#endif
+
 	/* Turn off all 3 PWM outputs. */
 	pwm123_init();
+
+	/* Initialize the TFT screen. */
+	tft_init();
 
 	/* Initialize the temperature probe. */
 	tsense_init();
 	tsense_select();
 
+	/* Incremental thermistor ADC measurements average. */
+	double raw_temp_avg = 0;
+
 	while (true) {
-		float Vconv = 3.3 / ((1 << 12) * 256);
-		float Vtemp = 0;
+		unsigned raw_temp = 0;
 
+		// 8 + 12 bits = 20 bits
 		for (int i = 0; i < 256; i++)
-			Vtemp += adc_read();
+			raw_temp += adc_read();
 
-		Vtemp *= Vconv;
+		// 20 bits to 16 bits
+		raw_temp >>= 4;
 
-		printf("V: %.2f mV\n", Vtemp * 1000.0);
-		printf("T: %.2f °C\n", voltage_to_temp(Vtemp));
-		printf("\n");
+		raw_temp_avg = (31.0 * raw_temp_avg + raw_temp) / 32.0;
 
-		sleep_ms(1000);
+		double v_temp = raw_temp_avg * 3.3 / (1 << 16);
+		double temp = voltage_to_temp(v_temp);
+
+		tft_fill(0);
+
+		char buf[20];
+		sprintf(buf, "%7.2f mV", v_temp * 1000.0);
+		tft_draw_string(70, 90, 3, buf);
+
+		sprintf(buf, "%7.2f \260C", temp);
+		tft_draw_string(70, 70, 3, buf);
+
+		sleep_ms(15);
+
+		tft_sync();
 	}
 }
