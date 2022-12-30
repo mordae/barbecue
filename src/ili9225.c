@@ -212,7 +212,7 @@ void tft_init(void)
 
 	printf("ili9225: Configure SPI...\n");
 
-	uint rate = spi_init(TFT_SPI_DEV, 32 * 1000 * 1000);
+	uint rate = spi_init(TFT_SPI_DEV, TFT_BAUDRATE);
 	printf("ili9225: Baudrate: %u\n", rate);
 
 	gpio_set_function(TFT_CS_PIN, GPIO_FUNC_SPI);

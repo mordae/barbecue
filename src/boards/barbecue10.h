@@ -55,6 +55,10 @@
 # define TFT_HEIGHT 220
 #endif
 
+#if !defined(TFT_BAUDRATE)
+# define TFT_BAUDRATE (64 * 1000 * 1000)
+#endif
+
 /* Rotary Encoder */
 #define RE_SW_PIN 23
 #define RE_B_PIN 24
