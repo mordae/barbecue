@@ -11,7 +11,7 @@
 
 /* Flash access clock divider. */
 #if !defined(PICO_FLASH_SPI_CLKDIV)
-# define PICO_FLASH_SPI_CLKDIV 10
+# define PICO_FLASH_SPI_CLKDIV 2
 #endif
 
 /* Total flash size in bytes. */
