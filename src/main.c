@@ -17,54 +17,61 @@
 
 #include <pico/stdlib.h>
 #include <hardware/adc.h>
+#include <hardware/timer.h>
 #include <tusb.h>
+#include <math.h>
 
 #include "ili9225.h"
+
+
+/* Because the screen is rotated. */
+#define WIDTH TFT_HEIGHT
+#define HEIGHT TFT_WIDTH
 
 
 static void pwm123_init(void)
 {
 	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(PWM3_P_PIN);
-	gpio_disable_pulls(PWM3_P_PIN);
-	gpio_set_dir(PWM3_P_PIN, GPIO_IN);
-	gpio_set_drive_strength(PWM3_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PWM3_P_PIN, 0);
+	gpio_init(FAN1_P_PIN);
+	gpio_disable_pulls(FAN1_P_PIN);
+	gpio_put(FAN1_P_PIN, 0);
+	gpio_set_drive_strength(FAN1_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_set_dir(FAN1_P_PIN, GPIO_IN);
 
 	/* Pull = Disabled */
-	gpio_init(PWM3_N_PIN);
-	gpio_disable_pulls(PWM3_N_PIN);
-	gpio_set_dir(PWM3_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(PWM3_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PWM3_N_PIN, 0);
+	gpio_init(FAN1_N_PIN);
+	gpio_disable_pulls(FAN1_N_PIN);
+	gpio_set_dir(FAN1_N_PIN, GPIO_OUT);
+	gpio_set_drive_strength(FAN1_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(FAN1_N_PIN, 0);
 
 	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(PWM2_P_PIN);
-	gpio_disable_pulls(PWM2_P_PIN);
-	gpio_set_dir(PWM2_P_PIN, GPIO_IN);
-	gpio_set_drive_strength(PWM2_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PWM2_P_PIN, 0);
+	gpio_init(FAN2_P_PIN);
+	gpio_disable_pulls(FAN2_P_PIN);
+	gpio_put(FAN2_P_PIN, 0);
+	gpio_set_drive_strength(FAN2_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_set_dir(FAN2_P_PIN, GPIO_IN);
 
 	/* Pull = Disabled */
-	gpio_init(PWM2_N_PIN);
-	gpio_disable_pulls(PWM2_N_PIN);
-	gpio_set_dir(PWM2_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(PWM2_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PWM2_N_PIN, 0);
+	gpio_init(FAN2_N_PIN);
+	gpio_disable_pulls(FAN2_N_PIN);
+	gpio_set_dir(FAN2_N_PIN, GPIO_OUT);
+	gpio_set_drive_strength(FAN2_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(FAN2_N_PIN, 0);
 
 	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(PWM1_P_PIN);
-	gpio_disable_pulls(PWM1_P_PIN);
-	gpio_set_dir(PWM1_P_PIN, GPIO_IN);
-	gpio_set_drive_strength(PWM1_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PWM1_P_PIN, 0);
+	gpio_init(PLATE_P_PIN);
+	gpio_disable_pulls(PLATE_P_PIN);
+	gpio_put(PLATE_P_PIN, 0);
+	gpio_set_drive_strength(PLATE_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_set_dir(PLATE_P_PIN, GPIO_IN);
 
 	/* Pull = Disabled */
-	gpio_init(PWM1_N_PIN);
-	gpio_disable_pulls(PWM1_N_PIN);
-	gpio_set_dir(PWM1_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(PWM1_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PWM1_N_PIN, 0);
+	gpio_init(PLATE_N_PIN);
+	gpio_disable_pulls(PLATE_N_PIN);
+	gpio_set_dir(PLATE_N_PIN, GPIO_OUT);
+	gpio_set_drive_strength(PLATE_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
+	gpio_put(PLATE_N_PIN, 0);
 }
 
 
@@ -97,6 +104,69 @@ static double voltage_to_temp(double v)
 }
 
 
+inline static int wrap(int x, int limit)
+{
+	return (limit + x) % limit;
+}
+
+
+/* History of temperatures. */
+static double history[WIDTH] = {0.0};
+static unsigned history_offset = 0;
+
+
+#define SPARKLINE_HEIGHT 88
+
+
+static void update_sparkline(double temp)
+{
+	static double temp_min_avg = 1000;
+	static double temp_max_avg = 0;
+	static double temp_avg = 21;
+
+	temp_avg = 0.99 * temp_avg + 0.01 * temp;
+
+	history_offset = wrap(history_offset + 1, WIDTH);
+	history[history_offset] = temp;
+
+	/* Draw slightly lighter sparkline background. */
+	tft_draw_rect(0, HEIGHT - SPARKLINE_HEIGHT - 1, WIDTH - 1, HEIGHT - 1, 1);
+
+	double temp_min = 1000, temp_max = 0;
+
+	for (int i = 0; i < WIDTH; i++) {
+		temp_min = fmin(temp_min, history[i]);
+		temp_max = fmax(temp_max, history[i]);
+	}
+
+	temp_min_avg = 0.99 * temp_min_avg + 0.01 * temp_min;
+	temp_max_avg = 0.99 * temp_max_avg + 0.01 * temp_max;
+
+	temp_min = fmin(fmin(temp_min_avg, temp_min), temp_avg - 0.5);
+	temp_max = fmax(fmax(temp_max_avg, temp_max), temp_avg + 0.5);
+
+	for (int i = 0; i < WIDTH; i++) {
+		int h = wrap(history_offset + 1 + i, WIDTH);
+		double temp_adj = (history[h] - temp_min) / (temp_max - temp_min);
+		int y = wrap((SPARKLINE_HEIGHT - 1) * temp_adj, SPARKLINE_HEIGHT);
+
+		tft_draw_pixel(i, HEIGHT - SPARKLINE_HEIGHT - 1 + y, 7);
+	}
+
+	double avg = (temp_avg - temp_min) / (temp_max - temp_min);
+	int y = HEIGHT - SPARKLINE_HEIGHT - 1 + wrap((SPARKLINE_HEIGHT - 1) * avg, SPARKLINE_HEIGHT);
+
+	tft_draw_rect(0, y, WIDTH - 1, y, 5);
+
+	if (y < HEIGHT - 20)
+		y += 17;
+
+	char buf[20];
+	sprintf(buf, "%7.2f \260C", temp);
+	tft_draw_string(WIDTH - 1 - strlen(buf) * 8, y - 16, 5, buf);
+}
+
+
 int main()
 {
 	/* Initialize stdio over USB. */
@@ -110,6 +180,9 @@ int main()
 	/* Turn off all 3 PWM outputs. */
 	pwm123_init();
 
+	/* XXX: Enable the fan for now. */
+	gpio_set_dir(FAN1_P_PIN, GPIO_OUT);
+
 	/* Initialize the TFT screen. */
 	tft_init();
 
@@ -118,7 +191,11 @@ int main()
 	tsense_select();
 
 	/* Incremental thermistor ADC measurements average. */
-	double raw_temp_avg = 0;
+	double raw_temp_avg = 256 * 4096 / 16;
+
+	uint64_t last_frame = 0;
+	uint64_t diff_time = 0;
+	unsigned frame_no = 0;
 
 	while (true) {
 		unsigned raw_temp = 0;
@@ -136,16 +213,26 @@ int main()
 		double temp = voltage_to_temp(v_temp);
 
 		tft_fill(0);
+		update_sparkline(temp);
 
 		char buf[20];
 		sprintf(buf, "%7.2f mV", v_temp * 1000.0);
-		tft_draw_string(70, 90, 3, buf);
+		tft_draw_string(70, 16 * 4, 3, buf);
 
 		sprintf(buf, "%7.2f \260C", temp);
-		tft_draw_string(70, 70, 3, buf);
-
-		sleep_ms(15);
+		tft_draw_string(70, 16 * 3, 3, buf);
 
 		tft_sync();
+
+		uint64_t now = time_us_64();
+		diff_time += now - last_frame;
+		last_frame = now;
+		frame_no++;
+
+		if (diff_time >= 1000000) {
+			printf("%u fps\n", frame_no);
+			diff_time = 0;
+			frame_no = 0;
+		}
 	}
 }

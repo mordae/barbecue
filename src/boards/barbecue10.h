@@ -20,16 +20,16 @@
 #endif
 
 /* J5 */
-#define PWM3_P_PIN 5
-#define PWM3_N_PIN 4
+#define FAN1_P_PIN 5
+#define FAN1_N_PIN 4
 
 /* J7 */
-#define PWM2_P_PIN 3
-#define PWM2_N_PIN 2
+#define FAN2_P_PIN 3
+#define FAN2_N_PIN 2
 
 /* J8 */
-#define PWM1_P_PIN 1
-#define PWM1_N_PIN 0
+#define PLATE_P_PIN 1
+#define PLATE_N_PIN 0
 
 /* J6 */
 #define TSENSE_PIN 29
@@ -60,6 +60,7 @@
 #endif
 
 /* Rotary Encoder */
-#define RE_SW_PIN 23
-#define RE_B_PIN 24
-#define RE_A_PIN 25
+#define RENC0_SW_PIN 23
+#define RENC0_CW_PIN 24
+#define RENC0_CCW_PIN 25
+#define RENC0_SENSITIVITY 10
