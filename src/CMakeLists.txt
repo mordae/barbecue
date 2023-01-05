@@ -1,4 +1,4 @@
-add_executable(barbecue main.c ili9225.c font.c)
+add_executable(barbecue main.c ili9225.c font.c task.c)
 
 target_link_libraries(barbecue
                       pico_stdlib
