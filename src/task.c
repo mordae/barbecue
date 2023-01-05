@@ -16,6 +16,8 @@
 
 #include "task.h"
 
+#include <pico/stdlib.h>
+
 #include <string.h>
 #include <stdlib.h>
 #include <limits.h>

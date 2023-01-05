@@ -16,8 +16,8 @@
 
 #pragma once
 
-#include <pico/stdlib.h>
-
+#include <pico/types.h>
+#include <hardware/platform_defs.h>
 
 /* Maximum number of tasks on a single core. */
 #if !defined(MAX_TASKS)
