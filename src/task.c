@@ -49,6 +49,8 @@ struct task {
 	int pri;
 	char name[9];
 	bool ready : 1;
+	bool back_seat_pri : 1;
+	bool back_seat : 1;
 };
 
 
@@ -59,8 +61,8 @@ enum task_status {
 };
 
 
-task_t task_running[NUM_CORES];
-task_t task_avail[NUM_CORES][MAX_TASKS];
+task_t task_running[NUM_CORES] = {0};
+task_t task_avail[NUM_CORES][MAX_TASKS] = {0};
 
 
 /* Saved scheduler context for respective cores. */
@@ -90,11 +92,19 @@ bool task_run(void)
 		if (!task || !task->ready || task->pri <= pri)
 			continue;
 
+		if (task->back_seat_pri) {
+			task->back_seat_pri = false;
+			continue;
+		}
+
 		pri = task->pri;
 	}
 
 	if (INT_MIN == pri)
 		return false;
+
+	task_t runnable = NULL;
+	int task_no = -1;
 
 	for (int i = 0; i < MAX_TASKS; i++) {
 		task_t task = task_avail[get_core_num()][i];
@@ -102,31 +112,41 @@ bool task_run(void)
 		if (!task || !task->ready || task->pri < pri)
 			continue;
 
-		enum task_status status;
-		status = setjmp(task_return[get_core_num()]);
-
-		if (TASK_SAVE == status) {
-			task_running[get_core_num()] = task;
-			longjmp(task->regs, (int)task);
+		if (task->back_seat) {
+			task->back_seat = false;
+			continue;
 		}
 
-		if (TASK_YIELD == status) {
-			task_running[get_core_num()] = NULL;
-			return true;
-		}
-
-		if (TASK_RETURN == status) {
-			task_running[get_core_num()] = NULL;
-			task_avail[get_core_num()][i] = NULL;
-
-			if (task->memory)
-				free(task->memory);
-
-			return true;
-		}
-
-		panic("invalid setjmp status (%i)", status);
+		task_no = i;
+		runnable = task;
 	}
+
+	assert (NULL != runnable);
+
+	enum task_status status;
+	status = setjmp(task_return[get_core_num()]);
+
+	if (TASK_SAVE == status) {
+		task_running[get_core_num()] = runnable;
+		longjmp(runnable->regs, (int)runnable);
+	}
+
+	if (TASK_YIELD == status) {
+		task_running[get_core_num()] = NULL;
+		return true;
+	}
+
+	if (TASK_RETURN == status) {
+		task_running[get_core_num()] = NULL;
+		task_avail[get_core_num()][task_no] = NULL;
+
+		if (runnable->memory)
+			free(runnable->memory);
+
+		return true;
+	}
+
+	panic("invalid setjmp status (%i)", status);
 }
 
 

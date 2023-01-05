@@ -69,6 +69,12 @@ void task_yield(void);
 
 
 /*
+ * Same as `task_yield`, but gives way to a task of any priority.
+ */
+void task_yield_to_all(void);
+
+
+/*
  * Pause current task and return to the scheduler.
  *
  * Task won't be resumed until marked ready. You need to set an alarm or some
