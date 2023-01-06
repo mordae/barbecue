@@ -301,7 +301,7 @@ void task_lock_spin_unlock_with_notify(volatile unsigned long *lock, unsigned lo
 	__sev();
 }
 
-void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, long unsigned save)
+void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, unsigned long save)
 {
 	spin_unlock(lock, save);
 
