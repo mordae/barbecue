@@ -17,6 +17,7 @@
 #include "task.h"
 
 #include <pico/stdlib.h>
+#include <hardware/sync.h>
 
 #include <string.h>
 #include <stdlib.h>
@@ -49,8 +50,7 @@ struct task {
 	int pri;
 	char name[9];
 	bool ready : 1;
-	bool back_seat_pri : 1;
-	bool back_seat : 1;
+	bool yield_all : 1;
 };
 
 
@@ -82,53 +82,64 @@ static void task_sentinel(void)
 }
 
 
-bool task_run(void)
+static bool task_runnable(task_t task)
 {
-	int pri = INT_MIN;
-
-	for (int i = 0; i < MAX_TASKS; i++) {
-		task_t task = task_avail[get_core_num()][i];
-
-		if (!task || !task->ready || task->pri <= pri)
-			continue;
-
-		if (task->back_seat_pri) {
-			task->back_seat_pri = false;
-			continue;
-		}
-
-		pri = task->pri;
-	}
-
-	if (INT_MIN == pri)
+	if (!task)
 		return false;
 
-	task_t runnable = NULL;
-	int task_no = -1;
+	if (!task->ready)
+		return false;
 
-	for (int i = 0; i < MAX_TASKS; i++) {
-		task_t task = task_avail[get_core_num()][i];
+	return true;
+}
 
-		if (!task || !task->ready || task->pri < pri)
+
+static int task_select(void)
+{
+	static size_t offset[NUM_CORES] = {};
+
+	int best_task_id = -1;
+	int min_pri = INT_MIN;
+
+	for (size_t i = 0; i < MAX_TASKS; i++) {
+		size_t tid = (offset[get_core_num()] + i) % MAX_TASKS;
+		task_t task = task_avail[get_core_num()][tid];
+
+		if (!task_runnable(task))
 			continue;
 
-		if (task->back_seat) {
-			task->back_seat = false;
-			continue;
+		if (task->pri > min_pri) {
+			if (task->yield_all) {
+				task->yield_all = false;
+				continue;
+			}
+
+			min_pri = task->pri;
+			best_task_id = tid;
 		}
-
-		task_no = i;
-		runnable = task;
 	}
 
-	assert (NULL != runnable);
+	offset[get_core_num()] += 1;
+
+	return best_task_id;
+}
+
+
+bool task_run(void)
+{
+	int task_no = task_select();
+
+	if (task_no < 0)
+		return false;
+
+	task_t task = task_avail[get_core_num()][task_no];
 
 	enum task_status status;
 	status = setjmp(task_return[get_core_num()]);
 
 	if (TASK_SAVE == status) {
-		task_running[get_core_num()] = runnable;
-		longjmp(runnable->regs, (int)runnable);
+		task_running[get_core_num()] = task;
+		longjmp(task->regs, (int)task);
 	}
 
 	if (TASK_YIELD == status) {
@@ -140,8 +151,8 @@ bool task_run(void)
 		task_running[get_core_num()] = NULL;
 		task_avail[get_core_num()][task_no] = NULL;
 
-		if (runnable->memory)
-			free(runnable->memory);
+		if (task->memory)
+			free(task->memory);
 
 		return true;
 	}
@@ -189,6 +200,19 @@ void task_yield(void)
 {
 	if (NULL == task_running[get_core_num()])
 		panic("task_yield called from outside of a task");
+
+	if (0 == setjmp(task_running[get_core_num()]->regs)) {
+		longjmp(task_return[get_core_num()], TASK_YIELD);
+	}
+}
+
+
+void task_yield_to_all(void)
+{
+	if (NULL == task_running[get_core_num()])
+		panic("task_yield_to_all called from outside of a task");
+
+	task_running[get_core_num()]->yield_all = true;
 
 	if (0 == setjmp(task_running[get_core_num()]->regs)) {
 		longjmp(task_return[get_core_num()], TASK_YIELD);
@@ -264,4 +288,45 @@ void task_set_name(task_t task, const char *name)
 void task_get_name(task_t task, char name[9])
 {
 	strcpy(name, task->name);
+}
+
+
+/****************************************************************************
+ * Compatibility layer to use tasks with blocking SDK functions.            *
+ ****************************************************************************/
+
+void task_lock_spin_unlock_with_notify(volatile unsigned long *lock, unsigned long save)
+{
+	spin_unlock(lock, save);
+	__sev();
+}
+
+void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, long unsigned save)
+{
+	spin_unlock(lock, save);
+
+	if (task_running[get_core_num()]) {
+		task_yield_to_all();
+	} else {
+		__wfe();
+	}
+}
+
+int task_lock_spin_unlock_with_timeout(volatile unsigned long *lock, unsigned long save, unsigned long long time)
+{
+	spin_unlock(lock, save);
+
+	if (task_running[get_core_num()]) {
+		task_yield_to_all();
+		return time_us_64() >= time;
+	} else {
+		return best_effort_wfe_or_timeout(time);
+	}
+}
+
+void task_sync_yield_until_before(unsigned long long time)
+{
+	if (task_running[get_core_num()]) {
+		task_yield_until(time);
+	}
 }

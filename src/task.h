@@ -96,12 +96,7 @@ void task_yield_until(uint64_t us);
 void task_set_ready(task_t task);
 
 
-/*
- * Manage task priority.
- *
- * Tasks with INT_MIN priority are paused and won't be resumed until
- * their priority changes.
- */
+/* Manage task priority. */
 void task_set_priority(task_t task, int pri);
 int task_get_priority(task_t task);
 
