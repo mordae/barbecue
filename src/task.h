@@ -71,7 +71,7 @@ void task_yield(void);
 /*
  * Same as `task_yield`, but gives way to a task of any priority.
  */
-void task_yield_to_all(void);
+void task_yield_to_any(void);
 
 
 /*
@@ -85,18 +85,22 @@ void task_yield_until_ready(void);
 
 
 /* Yield task until given amount of microseconds elapses. */
-void task_yield_for(uint64_t us);
+void task_sleep_us(uint64_t us);
+
+
+/* Yield task until given amount of milliseconds elapses. */
+void task_sleep_ms(uint64_t ms);
 
 
 /* Yield task until given time in microseconds. */
 void task_yield_until(uint64_t us);
 
 
-/* Mark given task ready to continue. */
+/* Mark given task as ready to continue. */
 void task_set_ready(task_t task);
 
 
-/* Manage task priority. */
+/* Manage task priority. Higher priority tasks run first. */
 void task_set_priority(task_t task, int pri);
 int task_get_priority(task_t task);
 

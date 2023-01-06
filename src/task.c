@@ -207,10 +207,10 @@ void task_yield(void)
 }
 
 
-void task_yield_to_all(void)
+void task_yield_to_any(void)
 {
 	if (NULL == task_running[get_core_num()])
-		panic("task_yield_to_all called from outside of a task");
+		panic("task_yield_to_any called from outside of a task");
 
 	task_running[get_core_num()]->yield_all = true;
 
@@ -250,13 +250,24 @@ static int64_t task_ready_alarm(alarm_id_t id, void *arg)
 }
 
 
-void task_yield_for(uint64_t us)
+void task_sleep_us(uint64_t us)
 {
 	if (NULL == task_running[get_core_num()])
-		panic("task_yield_for called from outside of a task");
+		panic("task_sleep_us called from outside of a task");
 
 	task_t task = task_running[get_core_num()];
 	(void)add_alarm_in_us(us, task_ready_alarm, task, true);
+	task_yield_until_ready();
+}
+
+
+void task_sleep_ms(uint64_t ms)
+{
+	if (NULL == task_running[get_core_num()])
+		panic("task_sleep_ms called from outside of a task");
+
+	task_t task = task_running[get_core_num()];
+	(void)add_alarm_in_us(1000 * ms, task_ready_alarm, task, true);
 	task_yield_until_ready();
 }
 
@@ -306,7 +317,7 @@ void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, unsigned long
 	spin_unlock(lock, save);
 
 	if (task_running[get_core_num()]) {
-		task_yield_to_all();
+		task_yield_to_any();
 	} else {
 		__wfe();
 	}
@@ -317,7 +328,7 @@ int task_lock_spin_unlock_with_timeout(volatile unsigned long *lock, unsigned lo
 	spin_unlock(lock, save);
 
 	if (task_running[get_core_num()]) {
-		task_yield_to_all();
+		task_yield_to_any();
 		return time_us_64() >= time;
 	} else {
 		return best_effort_wfe_or_timeout(time);
