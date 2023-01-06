@@ -110,7 +110,7 @@ void tft_sync(void);
  * Here goes whatever should be on the screen.
  * First come the Y rows, then the X columns.
  */
-extern uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH / 2];
+extern uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH >> 1];
 
 
 /*

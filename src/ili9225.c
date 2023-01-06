@@ -68,10 +68,10 @@ uint16_t tft_palette[16] = {
  *
  * After every cycle the buffers are rotated.
  */
-static uint8_t buffer[2][TFT_HEIGHT][TFT_WIDTH / 2];
-static uint8_t (*committed)[TFT_HEIGHT][TFT_WIDTH / 2];
+static uint8_t buffer[2][TFT_HEIGHT][TFT_WIDTH >> 1];
+static uint8_t (*committed)[TFT_HEIGHT][TFT_WIDTH >> 1];
 
-uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH / 2];
+uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH >> 1];
 
 extern uint8_t tft_font[256][16];
 
@@ -262,7 +262,7 @@ inline static uint8_t low(uint8_t x)
 
 void tft_sync(void)
 {
-	static uint8_t (*tmp)[TFT_HEIGHT][TFT_WIDTH / 2];
+	static uint8_t (*tmp)[TFT_HEIGHT][TFT_WIDTH >> 1];
 
 	tmp       = committed;
 	committed = tft_input;
@@ -277,7 +277,7 @@ void tft_sync(void)
 	for (int y = 0; y < TFT_HEIGHT; y++) {
 		uint8_t txbuf[TFT_WIDTH * 2];
 
-		for (int x = 0; x < TFT_WIDTH / 2; x++) {
+		for (int x = 0; x < TFT_WIDTH >> 1; x++) {
 			uint8_t twopix = (*committed)[y][x];
 
 			uint16_t left  = tft_palette[(twopix >> 4) & 0b1111];
@@ -368,14 +368,14 @@ struct tft_rect tft_rect_to_phys(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
 void tft_draw_pixel(uint8_t x, uint8_t y, uint8_t color)
 {
 	struct tft_point phys = tft_point_to_phys(x, y);
-	uint8_t twopix = (*tft_input)[phys.y][phys.x / 2];
+	uint8_t twopix = (*tft_input)[phys.y][phys.x >> 1];
 
 	if (phys.x & 1)
 		twopix = (twopix & 0b11110000) | ((color & 0b1111) << 0);
 	else
 		twopix = (twopix & 0b00001111) | ((color & 0b1111) << 4);
 
-	(*tft_input)[phys.y][phys.x / 2] = twopix;
+	(*tft_input)[phys.y][phys.x >> 1] = twopix;
 }
 
 
@@ -397,14 +397,14 @@ void tft_draw_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color
 
 	for (int y = phys.y0; y <= phys.y1; y++) {
 		for (int x = phys.x0; x <= phys.x1; x++) {
-			uint8_t twopix = (*tft_input)[y][x / 2];
+			uint8_t twopix = (*tft_input)[y][x >> 1];
 
 			if (x & 1)
 				twopix = (twopix & 0b11110000) | ((color & 0b1111) << 0);
 			else
 				twopix = (twopix & 0b00001111) | ((color & 0b1111) << 4);
 
-			(*tft_input)[y][x / 2] = twopix;
+			(*tft_input)[y][x >> 1] = twopix;
 		}
 	}
 }
