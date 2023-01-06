@@ -1,7 +1,9 @@
-add_executable(barbecue main.c ili9225.c font.c task.c)
+add_executable(barbecue main.c ili9225.c font.c task.c renc.c)
 
 target_link_libraries(barbecue
                       pico_stdlib
+                      pico_util
+                      pico_sync
                       hardware_adc
                       hardware_spi
                       hardware_timer)
