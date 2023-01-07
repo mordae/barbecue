@@ -22,11 +22,18 @@
 #include <math.h>
 
 #include "ili9225.h"
+#include "renc.h"
+#include "task.h"
 
 
 /* Because the screen is rotated. */
 #define WIDTH TFT_HEIGHT
 #define HEIGHT TFT_WIDTH
+
+
+static task_t screen_task_id;
+static task_t tsense_task_id;
+static task_t input_task_id;
 
 
 static void pwm123_init(void)
@@ -167,35 +174,39 @@ static void update_sparkline(double temp)
 }
 
 
-int main()
+static void screen_task(void)
 {
-	/* Initialize stdio over USB. */
-	stdio_init_all();
-
-#if 0
-	while (!stdio_usb_connected())
-		sleep_ms(10);
-#endif
-
-	/* Turn off all 3 PWM outputs. */
-	pwm123_init();
-
-	/* XXX: Enable the fan for now. */
-	gpio_set_dir(FAN1_P_PIN, GPIO_OUT);
-
-	/* Initialize the TFT screen. */
-	tft_init();
-
-	/* Initialize the temperature probe. */
-	tsense_init();
-	tsense_select();
-
-	/* Incremental thermistor ADC measurements average. */
-	double raw_temp_avg = 256 * 4096 / 16;
-
 	uint64_t last_frame = 0;
 	uint64_t diff_time = 0;
 	unsigned frame_no = 0;
+	unsigned fps = 0;
+
+	while (true) {
+		uint64_t now = time_us_64();
+		diff_time += now - last_frame;
+		last_frame = now;
+		frame_no++;
+
+		if (diff_time >= 1000000) {
+			fps = frame_no;
+			diff_time = 0;
+			frame_no = 0;
+		}
+
+		char buf[20];
+		sprintf(buf, "%u fps", fps);
+		tft_draw_string(0, 0, 3, buf);
+
+		tft_sync();
+		task_yield_until_ready();
+	}
+}
+
+
+static void tsense_task(void)
+{
+	/* Incremental thermistor ADC measurements average. */
+	double raw_temp_avg = (256 * 4096) >> 4;
 
 	while (true) {
 		unsigned raw_temp = 0;
@@ -222,17 +233,64 @@ int main()
 		sprintf(buf, "%7.2f \260C", temp);
 		tft_draw_string(70, 16 * 3, 3, buf);
 
-		tft_sync();
-
-		uint64_t now = time_us_64();
-		diff_time += now - last_frame;
-		last_frame = now;
-		frame_no++;
-
-		if (diff_time >= 1000000) {
-			printf("%u fps\n", frame_no);
-			diff_time = 0;
-			frame_no = 0;
-		}
+		task_set_ready(screen_task_id);
+		task_sleep_us(1 * 1000 * 1000 / 60);
 	}
+}
+
+static void input_task(void)
+{
+	while (true) {
+		struct renc_event event;
+
+		queue_remove_blocking(&renc_queue, &event);
+		printf("RE: num=%u sw=%u steps=%i\n",
+		       event.num, event.sw, event.steps);
+	}
+}
+
+
+int main()
+{
+	/* Initialize stdio over USB. */
+	stdio_init_all();
+
+#if 0
+	while (!stdio_usb_connected())
+		sleep_ms(10);
+#endif
+
+	/* Turn off all 3 PWM outputs. */
+	pwm123_init();
+
+	/* Initialize the TFT screen. */
+	tft_init();
+
+	/* Initialize the rotary encoder. */
+	renc_init(16);
+	renc_config(0, RENC_CW_PIN, RENC_CCW_PIN, RENC_SW_PIN, RENC_SENS);
+
+	/* Initialize the temperature probe. */
+	tsense_init();
+	tsense_select();
+
+	/* Draws user interface on the screen.
+	 * Starts not-ready, woken up by tsense_task.
+	 */
+	screen_task_id = task_create(screen_task, NULL, 1024);
+	task_set_name(screen_task_id, "screen");
+
+	/* Periodically measures temperature. */
+	tsense_task_id = task_create(tsense_task, NULL, 1024);
+	task_set_name(tsense_task_id, "tsense");
+	task_set_ready(tsense_task_id);
+
+	/* Interprets input events. */
+	input_task_id = task_create(input_task, NULL, 1024);
+	task_set_name(input_task_id, "input");
+	task_set_ready(input_task_id);
+	task_set_priority(input_task_id, 10);
+
+	/* Run tasks indefinitely. */
+	task_run_loop();
 }

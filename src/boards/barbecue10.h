@@ -60,7 +60,8 @@
 #endif
 
 /* Rotary Encoder */
-#define RENC0_SW_PIN 23
-#define RENC0_CW_PIN 24
-#define RENC0_CCW_PIN 25
-#define RENC0_SENSITIVITY 10
+#define NUM_RENC 1
+#define RENC_SW_PIN 23
+#define RENC_CW_PIN 25
+#define RENC_CCW_PIN 24
+#define RENC_SENS 10
