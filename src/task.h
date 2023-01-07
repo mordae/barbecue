@@ -24,6 +24,10 @@
 # define MAX_TASKS 16
 #endif
 
+#if !defined(__noreturn)
+# define __noreturn  __attribute__((noreturn))
+#endif
+
 
 /* Private task data. */
 typedef struct task *task_t;
@@ -40,8 +44,20 @@ extern task_t task_avail[NUM_CORES][MAX_TASKS];
 /*
  * Run a single task scheduled on the current core until it yields or returns.
  * Returns `false` when no task is ready.
+ *
+ * You might want to use `__wfe()` to put the core to sleep when there is
+ * nothing more to do, but make sure to only call it after `task_run` has
+ * returned `false`.
+ *
+ * This is what `task_run_loop` does.
  */
 bool task_run(void);
+
+
+/*
+ * Run tasks on this core indefinitely.
+ */
+__noreturn void task_run_loop(void);
 
 
 /*

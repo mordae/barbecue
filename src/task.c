@@ -25,10 +25,6 @@
 #include <setjmp.h>
 #include <stdio.h>
 
-#if !defined(__noreturn)
-# define __noreturn  __attribute__((noreturn))
-#endif
-
 
 enum {
 	R4 = 0,
@@ -158,6 +154,25 @@ bool task_run(void)
 	}
 
 	panic("invalid setjmp status (%i)", status);
+}
+
+
+
+__noreturn void task_run_loop(void)
+{
+	while (true) {
+		/* Work until we run out of ready tasks. */
+		while (task_run())
+			/* loop */;
+
+		/*
+		 * Sleep until an interrupt or event happens.
+		 *
+		 * If an event arrived since the last WFE, it does not sleep.
+		 * That way the potential race condition is mitigated.
+		 */
+		__wfe();
+	}
 }
 
 
