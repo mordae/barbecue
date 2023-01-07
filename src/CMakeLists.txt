@@ -5,6 +5,7 @@ target_link_libraries(barbecue
                       pico_util
                       pico_sync
                       pico_divider
+		      pico_multicore
                       hardware_adc
                       hardware_spi
                       hardware_timer)

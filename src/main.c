@@ -16,6 +16,7 @@
 
 
 #include <pico/stdlib.h>
+#include <pico/multicore.h>
 #include <hardware/adc.h>
 #include <hardware/timer.h>
 #include <tusb.h>
@@ -294,7 +295,7 @@ int main()
 	/* Draws user interface on the screen.
 	 * Starts not-ready, woken up by tsense_task.
 	 */
-	screen_task_id = task_create(screen_task, NULL, 1024);
+	screen_task_id = task_create_on_core(1, screen_task, NULL, 1024);
 	task_set_name(screen_task_id, "screen");
 
 	/* Periodically measures temperature. */
@@ -314,6 +315,10 @@ int main()
 	task_set_ready(stats_task_id);
 	task_set_priority(stats_task_id, -10);
 
-	/* Run tasks indefinitely. */
+	/* Run tasks on the second core. */
+	multicore_reset_core1();
+	multicore_launch_core1(task_run_loop);
+
+	/* Run tasks on this core. */
 	task_run_loop();
 }
