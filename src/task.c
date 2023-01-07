@@ -121,6 +121,8 @@ static int task_select(void)
 	int best_task_id = -1;
 	int min_pri = INT_MIN;
 
+	__dmb();
+
 	for (size_t i = 0; i < MAX_TASKS; i++) {
 		size_t tid = (offset[core] + i) % MAX_TASKS;
 		task_t task = task_avail[core][tid];
@@ -293,6 +295,8 @@ void task_yield_until_event(void)
 		panic("task_yield_until_event called from outside of a task");
 
 	task_running[core]->waiting = true;
+	__dmb();
+
 	task_yield();
 }
 
@@ -305,6 +309,8 @@ void task_yield_until_ready(void)
 		panic("task_yield_until_ready called from outside of a task");
 
 	task_running[core]->ready = false;
+	__dmb();
+
 	task_yield();
 }
 
@@ -312,12 +318,14 @@ void task_yield_until_ready(void)
 void task_set_ready(task_t task)
 {
 	task->ready = true;
+	__dmb();
 }
 
 
 void task_set_priority(task_t task, int pri)
 {
 	task->pri = pri;
+	__dmb();
 }
 
 
@@ -370,6 +378,7 @@ void task_yield_until(uint64_t us)
 
 int task_get_priority(task_t task)
 {
+	__dmb();
 	return task->pri;
 }
 
