@@ -195,6 +195,12 @@ __noreturn void task_run_loop(void)
 
 task_t task_create(void (*fn)(void), void *stack, size_t size)
 {
+	return task_create_on_core(get_core_num(), fn, stack, size);
+}
+
+
+task_t task_create_on_core(int core, void (*fn)(void), void *stack, size_t size)
+{
 	assert (size >= 128);
 
 	void *memory = NULL;
@@ -208,7 +214,6 @@ task_t task_create(void (*fn)(void), void *stack, size_t size)
 		memory = stack;
 	}
 
-	int core = get_core_num();
 	struct task *task = stack + size - sizeof(*task);
 	memset(task, 0, sizeof(*task));
 
