@@ -227,6 +227,7 @@ task_t task_create(void (*fn)(void), void *stack, size_t size)
 	panic("Too many tasks on core %u (MAX_TASKS=%u)", core, MAX_TASKS);
 }
 
+
 void task_yield(void)
 {
 	int core = get_core_num();
@@ -402,7 +403,7 @@ void task_stats_report_reset(unsigned core)
 
 		unsigned percent = 100 * task_stats[core][i].total_us / total_us;
 
-		printf("task: %2i (%4i) [%-8s] %4ux = %7u us = %3u%%\n",
+		printf("task: %2i (%4i) [%-8s] %5ux = %7u us = %3u%%\n",
 		       i, task_avail[core][i]->pri, task_avail[core][i]->name,
 		       task_stats[core][i].resumed,
 		       task_stats[core][i].total_us,
