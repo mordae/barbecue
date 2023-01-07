@@ -40,6 +40,14 @@ enum {
 };
 
 
+enum wait_reason {
+	READY = 0,
+	NOT_READY,
+	WAITING_FOR_ALARM,
+	WAITING_FOR_LOCK,
+};
+
+
 struct task {
 	/* Saved registers, including stack pointer. */
 	jmp_buf regs;
@@ -51,16 +59,13 @@ struct task {
 	int pri;
 
 	/* '\0'-terminated task name. */
-	char name[9];
+	char name[12];
 
 	/* Timestamp when was the task resumed the last time. */
 	uint32_t resumed_at;
 
-	/* Task is ready and can be resumed. */
-	bool ready;
-
-	/* Task is waiting for an event. Do not resume. */
-	bool waiting;
+	/* Reason the task is waiting. */
+	enum wait_reason waiting;
 };
 
 
@@ -75,6 +80,8 @@ task_t task_running[NUM_CORES] = {0};
 task_t task_avail[NUM_CORES][MAX_TASKS] = {0};
 
 task_stats_t task_stats[NUM_CORES][MAX_TASKS] = {0};
+
+static bool task_lock_notify[NUM_CORES] = {0};
 
 
 /* Saved scheduler context for respective cores. */
@@ -103,13 +110,7 @@ inline static bool task_runnable(task_t task)
 	if (!task)
 		return false;
 
-	if (!task->ready)
-		return false;
-
-	if (task->waiting)
-		return false;
-
-	return true;
+	return !task->waiting;
 }
 
 
@@ -120,8 +121,6 @@ static int task_select(void)
 	unsigned core = get_core_num();
 	int best_task_id = -1;
 	int min_pri = INT_MIN;
-
-	__dmb();
 
 	for (size_t i = 0; i < MAX_TASKS; i++) {
 		size_t tid = (offset[core] + i) % MAX_TASKS;
@@ -157,8 +156,19 @@ void task_init(void)
 
 bool task_run(void)
 {
-	int task_no = task_select();
 	unsigned core = get_core_num();
+
+	__dmb();
+
+	if (task_lock_notify[core]) {
+		task_lock_notify[core] = false;
+		/* Unblock all tasks waiting for locks. */
+		for (int i = 0; i < MAX_TASKS; i++)
+			if (WAITING_FOR_LOCK == task_avail[core][i]->waiting)
+				task_avail[core][i]->waiting = READY;
+	}
+
+	int task_no = task_select();
 
 	if (task_no < 0)
 		return false;
@@ -215,18 +225,7 @@ __noreturn void task_run_loop(void)
 		 */
 		__wfe();
 
-		/* Unblock tasks waiting for an event. */
-		task_unblock();
 	}
-}
-
-
-void task_unblock(void)
-{
-	unsigned core = get_core_num();
-
-	for (int i = 0; i < MAX_TASKS; i++)
-		task_avail[core][i]->waiting = false;
 }
 
 
@@ -287,20 +286,6 @@ void task_yield(void)
 }
 
 
-void task_yield_until_event(void)
-{
-	unsigned core = get_core_num();
-
-	if (NULL == task_running[core])
-		panic("task_yield_until_event called from outside of a task");
-
-	task_running[core]->waiting = true;
-	__dmb();
-
-	task_yield();
-}
-
-
 void task_yield_until_ready(void)
 {
 	unsigned core = get_core_num();
@@ -308,24 +293,20 @@ void task_yield_until_ready(void)
 	if (NULL == task_running[core])
 		panic("task_yield_until_ready called from outside of a task");
 
-	task_running[core]->ready = false;
-	__dmb();
-
+	task_running[core]->waiting = NOT_READY;
 	task_yield();
 }
 
 
 void task_set_ready(task_t task)
 {
-	task->ready = true;
-	__dmb();
+	task->waiting = READY;
 }
 
 
 void task_set_priority(task_t task, int pri)
 {
 	task->pri = pri;
-	__dmb();
 }
 
 
@@ -346,7 +327,9 @@ void task_sleep_us(uint64_t us)
 
 	task_t task = task_running[core];
 	(void)add_alarm_in_us(us, task_ready_alarm, task, true);
-	task_yield_until_ready();
+
+	task_running[core]->waiting = WAITING_FOR_ALARM;
+	task_yield();
 }
 
 
@@ -359,7 +342,9 @@ void task_sleep_ms(uint64_t ms)
 
 	task_t task = task_running[core];
 	(void)add_alarm_in_us(1000 * ms, task_ready_alarm, task, true);
-	task_yield_until_ready();
+
+	task_running[core]->waiting = WAITING_FOR_ALARM;
+	task_yield();
 }
 
 
@@ -372,13 +357,14 @@ void task_yield_until(uint64_t us)
 
 	task_t task = task_running[core];
 	(void)add_alarm_at(us, task_ready_alarm, task, true);
-	task_yield_until_ready();
+
+	task_running[core]->waiting = WAITING_FOR_ALARM;
+	task_yield();
 }
 
 
 int task_get_priority(task_t task)
 {
-	__dmb();
 	return task->pri;
 }
 
@@ -415,13 +401,16 @@ void task_stats_report_reset(unsigned core)
 
 		unsigned percent = 100 * stats->total_us / total_us;
 
-		char flags[] = "__";
+		char flags[] = "?";
 
-		if (task->ready)
+		if (READY == task->waiting)
 			flags[0] = 'R';
-
-		if (task->waiting)
-			flags[1] = 'W';
+		else if (NOT_READY == task->waiting)
+			flags[0] = 'X';
+		else if (WAITING_FOR_ALARM == task->waiting)
+			flags[0] = 'A';
+		else if (WAITING_FOR_LOCK == task->waiting)
+			flags[0] = 'L';
 
 		printf("task: %2i (%4i %s) [%-8s] %5ux = %7u us = %3u%%\n",
 		       i, task->pri, flags, task->name,
@@ -445,6 +434,17 @@ void task_stats_reset(unsigned core)
 void task_lock_spin_unlock_with_notify(volatile unsigned long *lock, unsigned long save)
 {
 	spin_unlock(lock, save);
+
+	unsigned core = get_core_num();
+	task_t task = task_running[core];
+
+	if (task) {
+		/* Make schedulers unblock tasks waiting for locks. */
+		for (int i = 0; i < NUM_CORES; i++)
+			task_lock_notify[i] = true;
+	}
+
+	/* Unblock the schedulers. */
 	__sev();
 }
 
@@ -452,8 +452,12 @@ void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, unsigned long
 {
 	spin_unlock(lock, save);
 
-	if (task_running[get_core_num()]) {
-		task_yield_until_event();
+	unsigned core = get_core_num();
+	task_t task = task_running[core];
+
+	if (task) {
+		task->waiting = WAITING_FOR_LOCK;
+		task_yield();
 	} else {
 		__wfe();
 	}
@@ -463,8 +467,12 @@ int task_lock_spin_unlock_with_timeout(volatile unsigned long *lock, unsigned lo
 {
 	spin_unlock(lock, save);
 
-	if (task_running[get_core_num()]) {
-		task_yield_until_event();
+	unsigned core = get_core_num();
+	task_t task = task_running[core];
+
+	if (task) {
+		task->waiting = WAITING_FOR_LOCK;
+		task_yield();
 		return time_us_64() >= time;
 	} else {
 		return best_effort_wfe_or_timeout(time);

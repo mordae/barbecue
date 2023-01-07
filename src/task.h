@@ -66,8 +66,7 @@ void task_init(void);
  * Returns `false` when no task is ready.
  *
  * You must call `__wfe()` to put the core to sleep when there is nothing more
- * to do, but make sure to only call it after `task_run` has returned `false`
- * and call `task_unblock` afterwards.
+ * to do, but make sure to only call it after `task_run` has returned `false`.
  *
  * Or just use `task_run_loop`.
  */
@@ -78,10 +77,6 @@ bool task_run(void);
  * Run tasks on this core indefinitely.
  */
 __noreturn void task_run_loop(void);
-
-
-/* Unblock tasks waiting for an event. */
-void task_unblock(void);
 
 
 /*
@@ -115,16 +110,6 @@ void task_yield(void);
 /*
  * Pause current task and return to the scheduler.
  *
- * Task won't be resumed until `task_unblock` is called on this core.
- * Since `task_unblock` should only be called after a `__wfe`, this makes
- * it possible for a tasks to wait for an event without blocking the core.
- */
-void task_yield_until_event(void);
-
-
-/*
- * Pause current task and return to the scheduler.
- *
  * Task won't be resumed until marked ready. You need to set an alarm or some
  * other interrupt to mark it once it should be resumed. Or mark it ready from
  * another task.
@@ -153,7 +138,7 @@ void task_set_priority(task_t task, int pri);
 int task_get_priority(task_t task);
 
 
-/* Manage task name of up to 8 bytes. */
+/* Manage task name of up to 11 bytes. */
 void task_set_name(task_t task, const char *name);
 void task_get_name(task_t task, char name[9]);
 
