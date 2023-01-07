@@ -103,7 +103,7 @@ static void update_state(struct state *st)
 	st->state = state_table[st->state & 0x7][pin_state];
 
 	if (st->state & (DIR_CW | DIR_CCW)) {
-		uint32_t now = time_us_32();
+		uint32_t now = time_us_32() >> 10;
 
 		if (now <= st->re_mtime) {
 			st->re_mtime = now - 1;
@@ -122,12 +122,10 @@ static void update_state(struct state *st)
 
 		if (st->state & DIR_CW) {
 			st->state &= 0xf;
-			//event.steps = speed;
-			event.steps = 1;
+			event.steps = speed;
 		} else if (st->state & DIR_CCW) {
 			st->state &= 0xf;
-			//event.steps = -speed;
-			event.steps = -1;
+			event.steps = -speed;
 		}
 
 		(void)queue_try_add(&renc_queue, &event);
