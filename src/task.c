@@ -351,6 +351,39 @@ void task_get_name(task_t task, char name[9])
 }
 
 
+void task_stats_report_reset(unsigned core)
+{
+	uint32_t total_us = 0;
+
+	for (int i = 0; i < MAX_TASKS; i++)
+		total_us += task_stats[core][i].total_us;
+
+	if (!total_us)
+		total_us = 1;
+
+	for (int i = 0; i < MAX_TASKS; i++) {
+		if (NULL == task_avail[core][i])
+			continue;
+
+		unsigned percent = 100 * task_stats[core][i].total_us / total_us;
+
+		printf("task: %2i (%4i) [%-8s] %5ux = %7u us = %3u%%\n",
+		       i, task_avail[core][i]->pri, task_avail[core][i]->name,
+		       task_stats[core][i].resumed,
+		       task_stats[core][i].total_us,
+		       percent);
+	}
+
+	task_stats_reset(core);
+}
+
+
+void task_stats_reset(unsigned core)
+{
+	memset(task_stats[core], 0, sizeof(task_stats[core]));
+}
+
+
 /****************************************************************************
  * Compatibility layer to use tasks with blocking SDK functions.            *
  ****************************************************************************/
@@ -389,37 +422,4 @@ void task_sync_yield_until_before(unsigned long long time)
 	if (task_running[get_core_num()]) {
 		task_yield_until(time);
 	}
-}
-
-
-void task_stats_report_reset(unsigned core)
-{
-	uint32_t total_us = 0;
-
-	for (int i = 0; i < MAX_TASKS; i++)
-		total_us += task_stats[core][i].total_us;
-
-	if (!total_us)
-		total_us = 1;
-
-	for (int i = 0; i < MAX_TASKS; i++) {
-		if (NULL == task_avail[core][i])
-			continue;
-
-		unsigned percent = 100 * task_stats[core][i].total_us / total_us;
-
-		printf("task: %2i (%4i) [%-8s] %5ux = %7u us = %3u%%\n",
-		       i, task_avail[core][i]->pri, task_avail[core][i]->name,
-		       task_stats[core][i].resumed,
-		       task_stats[core][i].total_us,
-		       percent);
-	}
-
-	task_stats_reset(core);
-}
-
-
-void task_stats_reset(unsigned core)
-{
-	memset(task_stats[core], 0, sizeof(task_stats[core]));
 }
