@@ -60,7 +60,7 @@ struct task {
 	bool ready;
 
 	/* Task is waiting for an event. Do not resume. */
-	bool blocked;
+	bool waiting;
 };
 
 
@@ -106,7 +106,7 @@ inline static bool task_runnable(task_t task)
 	if (!task->ready)
 		return false;
 
-	if (task->blocked)
+	if (task->waiting)
 		return false;
 
 	return true;
@@ -224,7 +224,7 @@ void task_unblock(void)
 	unsigned core = get_core_num();
 
 	for (int i = 0; i < MAX_TASKS; i++)
-		task_avail[core][i]->blocked = false;
+		task_avail[core][i]->waiting = false;
 }
 
 
@@ -292,7 +292,7 @@ void task_yield_until_event(void)
 	if (NULL == task_running[core])
 		panic("task_yield_until_event called from outside of a task");
 
-	task_running[core]->blocked = true;
+	task_running[core]->waiting = true;
 	task_yield();
 }
 
@@ -401,13 +401,22 @@ void task_stats_report_reset(unsigned core)
 		if (NULL == task_avail[core][i])
 			continue;
 
-		unsigned percent = 100 * task_stats[core][i].total_us / total_us;
+		task_t task = task_avail[core][i];
+		task_stats_t *stats = &task_stats[core][i];
 
-		printf("task: %2i (%4i) [%-8s] %5ux = %7u us = %3u%%\n",
-		       i, task_avail[core][i]->pri, task_avail[core][i]->name,
-		       task_stats[core][i].resumed,
-		       task_stats[core][i].total_us,
-		       percent);
+		unsigned percent = 100 * stats->total_us / total_us;
+
+		char flags[] = "__";
+
+		if (task->ready)
+			flags[0] = 'R';
+
+		if (task->waiting)
+			flags[1] = 'W';
+
+		printf("task: %2i (%4i %s) [%-8s] %5ux = %7u us = %3u%%\n",
+		       i, task->pri, flags, task->name,
+		       stats->resumed, stats->total_us, percent);
 	}
 
 	task_stats_reset(core);

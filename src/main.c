@@ -257,7 +257,7 @@ static void stats_task(void)
 	while (true) {
 		task_sleep_ms(10 * 1000);
 		for (int i = 0; i < NUM_CORES; i++) {
-			printf("-[ core %i ]------------------------------------------\n", i);
+			printf("-[ core %i ]---------------------------------------------\n", i);
 			task_stats_report_reset(i);
 		}
 		printf("\n");
