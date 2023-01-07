@@ -113,12 +113,13 @@ static int task_select(void)
 {
 	static size_t offset[NUM_CORES] = {};
 
+	unsigned core = get_core_num();
 	int best_task_id = -1;
 	int min_pri = INT_MIN;
 
 	for (size_t i = 0; i < MAX_TASKS; i++) {
-		size_t tid = (offset[get_core_num()] + i) % MAX_TASKS;
-		task_t task = task_avail[get_core_num()][tid];
+		size_t tid = (offset[core] + i) % MAX_TASKS;
+		task_t task = task_avail[core][tid];
 
 		if (!task_runnable(task))
 			continue;
@@ -129,7 +130,7 @@ static int task_select(void)
 		}
 	}
 
-	offset[get_core_num()] += 1;
+	offset[core] += 1;
 
 	return best_task_id;
 }
@@ -147,7 +148,7 @@ void task_init(void)
 bool task_run(void)
 {
 	int task_no = task_select();
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (task_no < 0)
 		return false;
@@ -209,7 +210,7 @@ __noreturn void task_run_loop(void)
 
 void task_unblock(void)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	for (int i = 0; i < MAX_TASKS; i++)
 		task_avail[core][i]->blocked = false;
@@ -222,9 +223,10 @@ task_t task_create(void (*fn)(void), void *stack, size_t size)
 }
 
 
-task_t task_create_on_core(int core, void (*fn)(void), void *stack, size_t size)
+task_t task_create_on_core(unsigned core, void (*fn)(void), void *stack, size_t size)
 {
 	assert (size >= 128);
+	assert (core < NUM_CORES);
 
 	void *memory = NULL;
 
@@ -258,7 +260,7 @@ task_t task_create_on_core(int core, void (*fn)(void), void *stack, size_t size)
 
 void task_yield(void)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (NULL == task_running[core])
 		panic("task_yield called from outside of a task");
@@ -271,7 +273,7 @@ void task_yield(void)
 
 void task_yield_until_event(void)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (NULL == task_running[core])
 		panic("task_yield_until_event called from outside of a task");
@@ -283,7 +285,7 @@ void task_yield_until_event(void)
 
 void task_yield_until_ready(void)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (NULL == task_running[core])
 		panic("task_yield_until_ready called from outside of a task");
@@ -315,7 +317,7 @@ static int64_t task_ready_alarm(alarm_id_t id, void *arg)
 
 void task_sleep_us(uint64_t us)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (NULL == task_running[core])
 		panic("task_sleep_us called from outside of a task");
@@ -328,7 +330,7 @@ void task_sleep_us(uint64_t us)
 
 void task_sleep_ms(uint64_t ms)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (NULL == task_running[core])
 		panic("task_sleep_ms called from outside of a task");
@@ -341,7 +343,7 @@ void task_sleep_ms(uint64_t ms)
 
 void task_yield_until(uint64_t us)
 {
-	int core = get_core_num();
+	unsigned core = get_core_num();
 
 	if (NULL == task_running[core])
 		panic("task_yield_until called from outside of a task");

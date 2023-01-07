@@ -105,7 +105,7 @@ task_t task_create(void (*fn)(void), void *stack, size_t size);
  * There is no concurrent access protection.
  * It is only safe to call this function before other cores are started.
  */
-task_t task_create_on_core(int core, void (*fn)(void), void *stack, size_t size);
+task_t task_create_on_core(unsigned core, void (*fn)(void), void *stack, size_t size);
 
 
 /*
