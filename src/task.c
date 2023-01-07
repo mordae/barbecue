@@ -41,13 +41,26 @@ enum {
 
 
 struct task {
+	/* Saved registers, including stack pointer. */
 	jmp_buf regs;
+
+	/* NULL or memory to `free()` after task returns. */
 	void *memory;
+
+	/* Task priority. High priority tasks run first. */
 	int pri;
+
+	/* '\0'-terminated task name. */
 	char name[9];
+
+	/* Timestamp when was the task resumed the last time. */
 	uint32_t resumed_at;
+
+	/* Task is ready and can be resumed. */
 	bool ready : 1;
-	bool yield_all : 1;
+
+	/* Task is waiting for an event. Do not resume. */
+	bool blocked : 1;
 };
 
 
@@ -81,12 +94,15 @@ static void task_sentinel(void)
 }
 
 
-static bool task_runnable(task_t task)
+inline static bool task_runnable(task_t task)
 {
 	if (!task)
 		return false;
 
 	if (!task->ready)
+		return false;
+
+	if (task->blocked)
 		return false;
 
 	return true;
@@ -108,11 +124,6 @@ static int task_select(void)
 			continue;
 
 		if (task->pri > min_pri) {
-			if (task->yield_all) {
-				task->yield_all = false;
-				continue;
-			}
-
 			min_pri = task->pri;
 			best_task_id = tid;
 		}
@@ -189,7 +200,19 @@ __noreturn void task_run_loop(void)
 		 * That way the potential race condition is mitigated.
 		 */
 		__wfe();
+
+		/* Unblock tasks waiting for an event. */
+		task_unblock();
 	}
+}
+
+
+void task_unblock(void)
+{
+	int core = get_core_num();
+
+	for (int i = 0; i < MAX_TASKS; i++)
+		task_avail[core][i]->blocked = false;
 }
 
 
@@ -246,18 +269,15 @@ void task_yield(void)
 }
 
 
-void task_yield_to_any(void)
+void task_yield_until_event(void)
 {
 	int core = get_core_num();
 
 	if (NULL == task_running[core])
-		panic("task_yield_to_any called from outside of a task");
+		panic("task_yield_until_event called from outside of a task");
 
-	task_running[core]->yield_all = true;
-
-	if (0 == setjmp(task_running[core]->regs)) {
-		longjmp(task_return[core], TASK_YIELD);
-	}
+	task_running[core]->blocked = true;
+	task_yield();
 }
 
 
@@ -399,7 +419,7 @@ void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, unsigned long
 	spin_unlock(lock, save);
 
 	if (task_running[get_core_num()]) {
-		task_yield_to_any();
+		task_yield_until_event();
 	} else {
 		__wfe();
 	}
@@ -410,7 +430,7 @@ int task_lock_spin_unlock_with_timeout(volatile unsigned long *lock, unsigned lo
 	spin_unlock(lock, save);
 
 	if (task_running[get_core_num()]) {
-		task_yield_to_any();
+		task_yield_until_event();
 		return time_us_64() >= time;
 	} else {
 		return best_effort_wfe_or_timeout(time);
