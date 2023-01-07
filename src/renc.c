@@ -73,10 +73,7 @@ queue_t renc_queue;
 static alarm_id_t alarm_id;
 
 
-static void intr_handler(unsigned gpio, uint32_t events);
-
-
-inline static int clamp(int x, int min, int max)
+__force_inline static int clamp(int x, int min, int max)
 {
 	if (x < min)
 		return min;
@@ -88,13 +85,13 @@ inline static int clamp(int x, int min, int max)
 }
 
 
-inline static unsigned bit(unsigned n)
+__force_inline static unsigned bit(unsigned n)
 {
 	return 1 << n;
 }
 
 
-static void update_state(struct state *st)
+static void __no_inline_not_in_flash_func(update_state)(struct state *st)
 {
 	uint8_t pin_state = (st->cw << 1) | st->ccw;
 
@@ -131,7 +128,7 @@ static void update_state(struct state *st)
 }
 
 
-inline static bool update_cw(struct state *st, unsigned events)
+__force_inline static bool update_cw(struct state *st, unsigned events)
 {
 	bool cw;
 
@@ -151,7 +148,7 @@ inline static bool update_cw(struct state *st, unsigned events)
 }
 
 
-inline static bool update_ccw(struct state *st, unsigned events)
+__force_inline static bool update_ccw(struct state *st, unsigned events)
 {
 	bool ccw;
 
@@ -171,7 +168,7 @@ inline static bool update_ccw(struct state *st, unsigned events)
 }
 
 
-static int64_t debounce(alarm_id_t id, void *arg)
+static int64_t __no_inline_not_in_flash_func(debounce)(alarm_id_t id, void *arg)
 {
 	/* Bounce alarm timed out. */
 	alarm_id = -1;
@@ -197,7 +194,7 @@ static int64_t debounce(alarm_id_t id, void *arg)
 }
 
 
-static void update_sw(struct state *st, unsigned events)
+static void __no_inline_not_in_flash_func(update_sw)(struct state *st, unsigned events)
 {
 	bool sw;
 
@@ -245,7 +242,7 @@ static void update_sw(struct state *st, unsigned events)
 }
 
 
-static void irq_handler(void)
+__isr static void __no_inline_not_in_flash_func(irq_handler)(void)
 {
 	unsigned event_mask = GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL;
 
