@@ -57,10 +57,10 @@ struct task {
 	uint32_t resumed_at;
 
 	/* Task is ready and can be resumed. */
-	bool ready : 1;
+	bool ready;
 
 	/* Task is waiting for an event. Do not resume. */
-	bool blocked : 1;
+	bool blocked;
 };
 
 
@@ -79,6 +79,10 @@ task_stats_t task_stats[NUM_CORES][MAX_TASKS] = {0};
 
 /* Saved scheduler context for respective cores. */
 static jmp_buf task_return[NUM_CORES];
+
+
+/* Spinlock to protect private data from concurrent access. */
+static spin_lock_t *lock = NULL;
 
 
 /*
@@ -138,6 +142,10 @@ static int task_select(void)
 
 void task_init(void)
 {
+	/* We only use the spin lock to guard task creation and removal.
+	 * Higher contention of striped lock should not be an issue. */
+	lock = spin_lock_init(next_striped_spin_lock_num());
+
 	for (int i = 0; i < NUM_CORES; i++) {
 		task_running[i] = NULL;
 		memset(task_avail[i], 0, sizeof(task_avail[i]));
@@ -174,7 +182,10 @@ bool task_run(void)
 
 	if (TASK_RETURN == status) {
 		task_running[core] = NULL;
+
+		uint32_t save = spin_lock_blocking(lock);
 		task_avail[core][task_no] = NULL;
+		spin_unlock(lock, save);
 
 		if (task->memory)
 			free(task->memory);
@@ -247,9 +258,12 @@ task_t task_create_on_core(unsigned core, void (*fn)(void), void *stack, size_t 
 	task->regs[PC] = (unsigned)task_sentinel;
 	task->regs[R4] = (unsigned)fn;
 
+	uint32_t save = spin_lock_blocking(lock);
+
 	for (int i = 0; i < MAX_TASKS; i++) {
 		if (!task_avail[core][i]) {
 			task_avail[core][i] = task;
+			spin_unlock(lock, save);
 			return task;
 		}
 	}

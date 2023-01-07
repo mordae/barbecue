@@ -99,12 +99,7 @@ void task_unblock(void);
 task_t task_create(void (*fn)(void), void *stack, size_t size);
 
 
-/*
- * Same as `task_create`, but allows specifying the core.
- *
- * There is no concurrent access protection.
- * It is only safe to call this function before other cores are started.
- */
+/* Same as `task_create`, but allows specifying the core. */
 task_t task_create_on_core(unsigned core, void (*fn)(void), void *stack, size_t size);
 
 
