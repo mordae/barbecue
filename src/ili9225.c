@@ -260,7 +260,7 @@ inline static uint8_t low(uint8_t x)
 }
 
 
-void tft_sync(void)
+void tft_swap_buffers(void)
 {
 	static uint8_t (*tmp)[TFT_HEIGHT][TFT_WIDTH >> 1];
 
@@ -269,7 +269,11 @@ void tft_sync(void)
 	tft_input = tmp;
 
 	memcpy(*tft_input, *committed, sizeof(*tft_input));
+}
 
+
+void tft_sync(void)
+{
 	/* Home the GRAM Address Counter. */
 	set_register(0x20, 0);
 	set_register(0x21, 0);
@@ -295,6 +299,13 @@ void tft_sync(void)
 		/* Send the line in buffer. */
 		write_buffer(txbuf, TFT_WIDTH * 2);
 	}
+}
+
+
+void tft_swap_sync(void)
+{
+	tft_swap_buffers();
+	tft_sync();
 }
 
 

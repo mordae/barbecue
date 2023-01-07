@@ -96,14 +96,20 @@ void tft_init(void);
 
 
 /*
+ * Swap buffers to allow for a background sync.
+ */
+void tft_swap_buffers(void);
+
+
+/*
  * Start display synchronization cycle.
- *
- * Blocks until the last cycle finishes so the you do not clobber
- * the input buffer it reads from.
- *
- * Changes tft_input to a new buffer and copies the last one to it.
+ * Blocks until it's done so the you do not clobber the back buffer.
  */
 void tft_sync(void);
+
+
+/* Shortcut to swap buffers and sync at once. */
+void tft_swap_sync(void);
 
 
 /*
