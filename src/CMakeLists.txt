@@ -4,6 +4,7 @@ target_link_libraries(barbecue
                       pico_stdlib
                       pico_util
                       pico_sync
+                      pico_divider
                       hardware_adc
                       hardware_spi
                       hardware_timer)
