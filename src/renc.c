@@ -98,8 +98,6 @@ static void update_state(struct state *st)
 {
 	uint8_t pin_state = (st->cw << 1) | st->ccw;
 
-	//printf("re: ccw=%i cw=%i inp=%i st %i->%i\n", st->ccw, st->cw, pin_state, st->state & 0x7, state_table[st->state & 0x7][pin_state]);
-
 	st->state = state_table[st->state & 0x7][pin_state];
 
 	if (st->state & (DIR_CW | DIR_CCW)) {
