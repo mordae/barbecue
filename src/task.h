@@ -33,12 +33,32 @@
 typedef struct task *task_t;
 
 
+/* Per-task statistics. */
+struct task_stats {
+	/* How many times has the task been resumed. */
+	uint32_t resumed;
+
+	/* How many microseconds of runtime has the task collected. */
+	uint32_t total_us;
+};
+
+typedef struct task_stats task_stats_t;
+
+
 /* Current tasks running on respective cores. */
 extern task_t task_running[NUM_CORES];
 
 
 /* Tasks assigned to respective cores. */
 extern task_t task_avail[NUM_CORES][MAX_TASKS];
+
+
+/* Collected task statistics. */
+extern task_stats_t task_stats[NUM_CORES][MAX_TASKS];
+
+
+/* Initialize task scheduler. */
+void task_init(void);
 
 
 /*
@@ -124,3 +144,10 @@ int task_get_priority(task_t task);
 /* Manage task name of up to 8 bytes. */
 void task_set_name(task_t task, const char *name);
 void task_get_name(task_t task, char name[9]);
+
+
+/* Print per-task statistics for given core and then reset them. */
+void task_stats_report_reset(unsigned core);
+
+/* Reset task statistics for given core. */
+void task_stats_reset(unsigned core);

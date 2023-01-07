@@ -34,6 +34,7 @@
 static task_t screen_task_id;
 static task_t tsense_task_id;
 static task_t input_task_id;
+static task_t stats_task_id;
 
 
 static void pwm123_init(void)
@@ -250,10 +251,26 @@ static void input_task(void)
 }
 
 
+static void stats_task(void)
+{
+	while (true) {
+		task_sleep_ms(10 * 1000);
+		for (int i = 0; i < NUM_CORES; i++) {
+			printf("-[ core %i ]-----------------------------------------\n", i);
+			task_stats_report_reset(i);
+		}
+		printf("\n");
+	}
+}
+
+
 int main()
 {
 	/* Initialize stdio over USB. */
 	stdio_init_all();
+
+	/* Initialize task scheduler. */
+	task_init();
 
 #if 0
 	while (!stdio_usb_connected())
@@ -290,6 +307,12 @@ int main()
 	task_set_name(input_task_id, "input");
 	task_set_ready(input_task_id);
 	task_set_priority(input_task_id, 10);
+
+	/* Prints task statistics. */
+	stats_task_id = task_create(stats_task, NULL, 1024);
+	task_set_name(stats_task_id, "stats");
+	task_set_ready(stats_task_id);
+	task_set_priority(stats_task_id, -10);
 
 	/* Run tasks indefinitely. */
 	task_run_loop();

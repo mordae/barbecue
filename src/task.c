@@ -45,6 +45,7 @@ struct task {
 	void *memory;
 	int pri;
 	char name[9];
+	uint32_t resumed_at;
 	bool ready : 1;
 	bool yield_all : 1;
 };
@@ -59,6 +60,8 @@ enum task_status {
 
 task_t task_running[NUM_CORES] = {0};
 task_t task_avail[NUM_CORES][MAX_TASKS] = {0};
+
+task_stats_t task_stats[NUM_CORES][MAX_TASKS] = {0};
 
 
 /* Saved scheduler context for respective cores. */
@@ -121,31 +124,45 @@ static int task_select(void)
 }
 
 
+void task_init(void)
+{
+	for (int i = 0; i < NUM_CORES; i++) {
+		task_running[i] = NULL;
+		memset(task_avail[i], 0, sizeof(task_avail[i]));
+	}
+}
+
+
 bool task_run(void)
 {
 	int task_no = task_select();
+	int core = get_core_num();
 
 	if (task_no < 0)
 		return false;
 
-	task_t task = task_avail[get_core_num()][task_no];
+	task_t task = task_avail[core][task_no];
 
 	enum task_status status;
-	status = setjmp(task_return[get_core_num()]);
+	status = setjmp(task_return[core]);
 
 	if (TASK_SAVE == status) {
-		task_running[get_core_num()] = task;
+		task_stats[core][task_no].resumed++;
+		task_avail[core][task_no]->resumed_at = time_us_32();
+		task_running[core] = task;
 		longjmp(task->regs, (int)task);
 	}
 
 	if (TASK_YIELD == status) {
-		task_running[get_core_num()] = NULL;
+		uint32_t since = task_avail[core][task_no]->resumed_at;
+		task_stats[core][task_no].total_us += time_us_32() - since;
+		task_running[core] = NULL;
 		return true;
 	}
 
 	if (TASK_RETURN == status) {
-		task_running[get_core_num()] = NULL;
-		task_avail[get_core_num()][task_no] = NULL;
+		task_running[core] = NULL;
+		task_avail[core][task_no] = NULL;
 
 		if (task->memory)
 			free(task->memory);
@@ -191,7 +208,7 @@ task_t task_create(void (*fn)(void), void *stack, size_t size)
 		memory = stack;
 	}
 
-
+	int core = get_core_num();
 	struct task *task = stack + size - sizeof(*task);
 	memset(task, 0, sizeof(*task));
 
@@ -201,46 +218,51 @@ task_t task_create(void (*fn)(void), void *stack, size_t size)
 	task->regs[R4] = (unsigned)fn;
 
 	for (int i = 0; i < MAX_TASKS; i++) {
-		if (!task_avail[get_core_num()][i]) {
-			task_avail[get_core_num()][i] = task;
+		if (!task_avail[core][i]) {
+			task_avail[core][i] = task;
 			return task;
 		}
 	}
 
-	panic("Too many tasks on core %u (MAX_TASKS=%u)",
-		get_core_num(), MAX_TASKS);
+	panic("Too many tasks on core %u (MAX_TASKS=%u)", core, MAX_TASKS);
 }
 
 void task_yield(void)
 {
-	if (NULL == task_running[get_core_num()])
+	int core = get_core_num();
+
+	if (NULL == task_running[core])
 		panic("task_yield called from outside of a task");
 
-	if (0 == setjmp(task_running[get_core_num()]->regs)) {
-		longjmp(task_return[get_core_num()], TASK_YIELD);
+	if (0 == setjmp(task_running[core]->regs)) {
+		longjmp(task_return[core], TASK_YIELD);
 	}
 }
 
 
 void task_yield_to_any(void)
 {
-	if (NULL == task_running[get_core_num()])
+	int core = get_core_num();
+
+	if (NULL == task_running[core])
 		panic("task_yield_to_any called from outside of a task");
 
-	task_running[get_core_num()]->yield_all = true;
+	task_running[core]->yield_all = true;
 
-	if (0 == setjmp(task_running[get_core_num()]->regs)) {
-		longjmp(task_return[get_core_num()], TASK_YIELD);
+	if (0 == setjmp(task_running[core]->regs)) {
+		longjmp(task_return[core], TASK_YIELD);
 	}
 }
 
 
 void task_yield_until_ready(void)
 {
-	if (NULL == task_running[get_core_num()])
+	int core = get_core_num();
+
+	if (NULL == task_running[core])
 		panic("task_yield_until_ready called from outside of a task");
 
-	task_running[get_core_num()]->ready = false;
+	task_running[core]->ready = false;
 	task_yield();
 }
 
@@ -267,10 +289,12 @@ static int64_t task_ready_alarm(alarm_id_t id, void *arg)
 
 void task_sleep_us(uint64_t us)
 {
-	if (NULL == task_running[get_core_num()])
+	int core = get_core_num();
+
+	if (NULL == task_running[core])
 		panic("task_sleep_us called from outside of a task");
 
-	task_t task = task_running[get_core_num()];
+	task_t task = task_running[core];
 	(void)add_alarm_in_us(us, task_ready_alarm, task, true);
 	task_yield_until_ready();
 }
@@ -278,10 +302,12 @@ void task_sleep_us(uint64_t us)
 
 void task_sleep_ms(uint64_t ms)
 {
-	if (NULL == task_running[get_core_num()])
+	int core = get_core_num();
+
+	if (NULL == task_running[core])
 		panic("task_sleep_ms called from outside of a task");
 
-	task_t task = task_running[get_core_num()];
+	task_t task = task_running[core];
 	(void)add_alarm_in_us(1000 * ms, task_ready_alarm, task, true);
 	task_yield_until_ready();
 }
@@ -289,10 +315,12 @@ void task_sleep_ms(uint64_t ms)
 
 void task_yield_until(uint64_t us)
 {
-	if (NULL == task_running[get_core_num()])
+	int core = get_core_num();
+
+	if (NULL == task_running[core])
 		panic("task_yield_until called from outside of a task");
 
-	task_t task = task_running[get_core_num()];
+	task_t task = task_running[core];
 	(void)add_alarm_at(us, task_ready_alarm, task, true);
 	task_yield_until_ready();
 }
@@ -355,4 +383,37 @@ void task_sync_yield_until_before(unsigned long long time)
 	if (task_running[get_core_num()]) {
 		task_yield_until(time);
 	}
+}
+
+
+void task_stats_report_reset(unsigned core)
+{
+	uint32_t total_us = 0;
+
+	for (int i = 0; i < MAX_TASKS; i++)
+		total_us += task_stats[core][i].total_us;
+
+	if (!total_us)
+		total_us = 1;
+
+	for (int i = 0; i < MAX_TASKS; i++) {
+		if (NULL == task_avail[core][i])
+			continue;
+
+		unsigned percent = 100 * task_stats[core][i].total_us / total_us;
+
+		printf("task: %2i (%4i) [%-8s] %4ux = %7u us = %3u%%\n",
+		       i, task_avail[core][i]->pri, task_avail[core][i]->name,
+		       task_stats[core][i].resumed,
+		       task_stats[core][i].total_us,
+		       percent);
+	}
+
+	task_stats_reset(core);
+}
+
+
+void task_stats_reset(unsigned core)
+{
+	memset(task_stats[core], 0, sizeof(task_stats[core]));
 }
