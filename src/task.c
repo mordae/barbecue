@@ -52,8 +52,11 @@ struct task {
 	/* Saved registers, including stack pointer. */
 	jmp_buf regs;
 
-	/* NULL or memory to `free()` after task returns. */
-	void *memory;
+	/* Bottom of the stack. */
+	uint32_t *stack;
+
+	/* Size of the stack. */
+	size_t stack_size;
 
 	/* Task priority. High priority tasks run first. */
 	int pri;
@@ -66,6 +69,15 @@ struct task {
 
 	/* Reason the task is waiting. */
 	enum wait_reason waiting;
+
+	/* How many times to undo NOT_READY status. */
+	unsigned goodwill;
+
+	/* Stack must be 8-byte aligned. */
+	uint32_t _align_pad;
+
+	/* Stack top canary. */
+	uint32_t canary;
 };
 
 
@@ -105,15 +117,6 @@ static void task_sentinel(void)
 }
 
 
-inline static bool task_runnable(task_t task)
-{
-	if (!task)
-		return false;
-
-	return !task->waiting;
-}
-
-
 static int task_select(void)
 {
 	static size_t offset[NUM_CORES] = {};
@@ -126,7 +129,19 @@ static int task_select(void)
 		size_t tid = (offset[core] + i) % MAX_TASKS;
 		task_t task = task_avail[core][tid];
 
-		if (!task_runnable(task))
+		if (!task)
+			continue;
+
+		if (NOT_READY == task->waiting) {
+			uint32_t save = spin_lock_blocking(lock);
+			if (task->goodwill) {
+				task->goodwill--;
+				task->waiting = READY;
+			}
+			spin_unlock(lock, save);
+		}
+
+		if (task->waiting)
 			continue;
 
 		if (task->pri > min_pri) {
@@ -135,7 +150,7 @@ static int task_select(void)
 		}
 	}
 
-	offset[core] += 1;
+	offset[core] = (offset[core] + 1) % MAX_TASKS;
 
 	return best_task_id;
 }
@@ -143,9 +158,7 @@ static int task_select(void)
 
 void task_init(void)
 {
-	/* We only use the spin lock to guard task creation and removal.
-	 * Higher contention of striped lock should not be an issue. */
-	lock = spin_lock_init(next_striped_spin_lock_num());
+	lock = spin_lock_init(spin_lock_claim_unused(true));
 
 	for (int i = 0; i < NUM_CORES; i++) {
 		task_running[i] = NULL;
@@ -162,6 +175,7 @@ bool task_run(void)
 
 	if (task_lock_notify[core]) {
 		task_lock_notify[core] = false;
+
 		/* Unblock all tasks waiting for locks. */
 		for (int i = 0; i < MAX_TASKS; i++)
 			if (WAITING_FOR_LOCK == task_avail[core][i]->waiting)
@@ -186,9 +200,16 @@ bool task_run(void)
 	}
 
 	if (TASK_YIELD == status) {
-		uint32_t since = task_avail[core][task_no]->resumed_at;
+		uint32_t since = task->resumed_at;
 		task_stats[core][task_no].total_us += time_us_32() - since;
 		task_running[core] = NULL;
+
+		if (0xdeadbeef != task->canary)
+			panic("task [%s]: stack underflow", task->name);
+
+		if (0xdeadbeef != task->stack[0])
+			panic("task [%s]: stack overflow", task->name);
+
 		return true;
 	}
 
@@ -199,8 +220,13 @@ bool task_run(void)
 		task_avail[core][task_no] = NULL;
 		spin_unlock(lock, save);
 
-		if (task->memory)
-			free(task->memory);
+		if (0xdeadbeef != task->canary)
+			panic("task [%s]: stack underflow", task->name);
+
+		if (0xdeadbeef != task->stack[0])
+			panic("task [%s]: stack overflow", task->name);
+
+		free(task->stack);
 
 		return true;
 	}
@@ -229,35 +255,37 @@ __noreturn void task_run_loop(void)
 }
 
 
-task_t task_create(void (*fn)(void), void *stack, size_t size)
+task_t task_create(void (*fn)(void), size_t size)
 {
-	return task_create_on_core(get_core_num(), fn, stack, size);
+	return task_create_on_core(get_core_num(), fn, size);
 }
 
 
-task_t task_create_on_core(unsigned core, void (*fn)(void), void *stack, size_t size)
+task_t task_create_on_core(unsigned core, void (*fn)(void), size_t size)
 {
-	assert (size >= 128);
+	assert (size >= 256);
 	assert (core < NUM_CORES);
 
-	void *memory = NULL;
+	void *stack = malloc(size);
 
-	if (NULL == stack) {
-		stack = malloc(size);
-		if (NULL == stack) {
-			panic("task_create: failed to allocate stack (size=%u)", size);
-		}
-
-		memory = stack;
-	}
+	if (NULL == stack)
+		panic("task_create: failed to allocate stack (size=%u)", size);
 
 	struct task *task = stack + size - sizeof(*task);
 	memset(task, 0, sizeof(*task));
 
-	task->memory = memory;
+	task->stack = stack;
+	task->stack_size = size - sizeof(*task);
 	task->regs[SP] = (unsigned)task;
 	task->regs[PC] = (unsigned)task_sentinel;
 	task->regs[R4] = (unsigned)fn;
+	task->waiting = NOT_READY;
+
+	/* Mark stack so that we can determine its usage. */
+	for (int i = 0; i < task->stack_size >> 2; i++)
+		task->stack[i] = 0xdeadbeef;
+
+	task->canary = 0xdeadbeef;
 
 	uint32_t save = spin_lock_blocking(lock);
 
@@ -300,7 +328,9 @@ void task_yield_until_ready(void)
 
 void task_set_ready(task_t task)
 {
-	task->waiting = READY;
+	uint32_t save = spin_lock_blocking(lock);
+	task->goodwill++;
+	spin_unlock(lock, save);
 }
 
 
@@ -313,7 +343,10 @@ void task_set_priority(task_t task, int pri)
 static int64_t task_ready_alarm(alarm_id_t id, void *arg)
 {
 	task_t task = arg;
-	task_set_ready(task);
+
+	if (WAITING_FOR_ALARM == task->waiting)
+		task->waiting = READY;
+
 	return 0;
 }
 
@@ -382,6 +415,22 @@ void task_get_name(task_t task, char name[9])
 }
 
 
+static uint32_t stack_free_space(task_t task)
+{
+	uint32_t level = 0;
+
+	for (int i = 0; i < task->stack_size >> 2; i++) {
+		if (0xdeadbeef == task->stack[i]) {
+			level += 4;
+		} else {
+			break;
+		}
+	}
+
+	return level;
+}
+
+
 void task_stats_report_reset(unsigned core)
 {
 	uint32_t total_us = 0;
@@ -391,6 +440,8 @@ void task_stats_report_reset(unsigned core)
 
 	if (!total_us)
 		total_us = 1;
+
+	printf("task: core %u:\n", core);
 
 	for (int i = 0; i < MAX_TASKS; i++) {
 		if (NULL == task_avail[core][i])
@@ -412,8 +463,10 @@ void task_stats_report_reset(unsigned core)
 		else if (WAITING_FOR_LOCK == task->waiting)
 			flags[0] = 'L';
 
-		printf("task: %2i (%4i %s) [%-8s] %5ux = %7u us = %3u%%\n",
-		       i, task->pri, flags, task->name,
+		unsigned stack = stack_free_space(task);
+
+		printf("task: %2i (%4i %s+%i) [%-11s] [%4u] %5ux = %8u us = %3u%%\n",
+		       i, task->pri, flags, task->goodwill, task->name, stack,
 		       stats->resumed, stats->total_us, percent);
 	}
 

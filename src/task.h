@@ -80,22 +80,19 @@ __noreturn void task_run_loop(void);
 
 
 /*
- * Create new task with given stack.
+ * Create new task with given stack size.
  * Task private data are stored at the top of the stack.
  *
- * Minimum stack size (including internal task data) is 128 bytes.
+ * Minimum stack size (including internal task data) is 256 bytes.
  *
  * Recommended minimum value is 1024 bytes for when you do not plan to call
  * complex SDK functions. Allocating 4096 bytes should be enough for anything.
- *
- * If you do not give a stack pointer, it will be allocated and automatically
- * freed when the task returns.
  */
-task_t task_create(void (*fn)(void), void *stack, size_t size);
+task_t task_create(void (*fn)(void), size_t size);
 
 
 /* Same as `task_create`, but allows specifying the core. */
-task_t task_create_on_core(unsigned core, void (*fn)(void), void *stack, size_t size);
+task_t task_create_on_core(unsigned core, void (*fn)(void), size_t size);
 
 
 /*

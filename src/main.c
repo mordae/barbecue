@@ -199,7 +199,16 @@ static void screen_task(void)
 		sprintf(buf, "%u fps", fps);
 		tft_draw_string(0, 0, 3, buf);
 
+		/* Commit the screen buffer. */
+		tft_swap_buffers();
+
+		/* Unblock the data gathering task. */
+		task_set_ready(tsense_task_id);
+
+		/* Output the buffer. */
 		tft_sync();
+
+		/* Wait for more data. */
 		task_yield_until_ready();
 	}
 }
@@ -235,8 +244,12 @@ static void tsense_task(void)
 		sprintf(buf, "%7.2f \260C", temp);
 		tft_draw_string(70, 16 * 3, 3, buf);
 
+		/* Unblock the display output task. */
 		task_set_ready(screen_task_id);
-		task_sleep_us(1 * 1000 * 1000 / 60);
+
+		/* Wait for the buffers to get flipped so that we can
+		 * begin drawing next frame. */
+		task_yield_until_ready();
 	}
 }
 
@@ -256,10 +269,9 @@ static void stats_task(void)
 {
 	while (true) {
 		task_sleep_ms(10 * 1000);
-		for (int i = 0; i < NUM_CORES; i++) {
-			printf("-[ core %i ]--------------------------------------------\n", i);
+		for (int i = 0; i < NUM_CORES; i++)
 			task_stats_report_reset(i);
-		}
+
 		printf("\n");
 	}
 }
@@ -295,22 +307,22 @@ int main()
 	/* Draws user interface on the screen.
 	 * Starts not-ready, woken up by tsense_task.
 	 */
-	screen_task_id = task_create_on_core(1, screen_task, NULL, 1024);
+	screen_task_id = task_create_on_core(1, screen_task, 1024);
 	task_set_name(screen_task_id, "screen");
 
 	/* Periodically measures temperature. */
-	tsense_task_id = task_create(tsense_task, NULL, 1024);
+	tsense_task_id = task_create(tsense_task, 1536);
 	task_set_name(tsense_task_id, "tsense");
 	task_set_ready(tsense_task_id);
 
 	/* Interprets input events. */
-	input_task_id = task_create(input_task, NULL, 1024);
+	input_task_id = task_create(input_task, 1024);
 	task_set_name(input_task_id, "input");
 	task_set_ready(input_task_id);
 	task_set_priority(input_task_id, 10);
 
 	/* Prints task statistics. */
-	stats_task_id = task_create(stats_task, NULL, 1024);
+	stats_task_id = task_create(stats_task, 1536);
 	task_set_name(stats_task_id, "stats");
 	task_set_ready(stats_task_id);
 	task_set_priority(stats_task_id, -10);
