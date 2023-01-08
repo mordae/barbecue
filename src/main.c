@@ -289,10 +289,15 @@ int main()
 	/* Initialize task scheduler. */
 	task_init();
 
-#if 0
-	while (!stdio_usb_connected())
+	/* Wait up to 1s in case the console is attached. */
+	for (int i = 0; i < 100; i++) {
+		if (stdio_usb_connected())
+			break;
+
 		sleep_ms(10);
-#endif
+	}
+
+	printf("Welcome! Have a safe and productive day!\n");
 
 	/* Turn off all 3 PWM outputs. */
 	pwm123_init();
