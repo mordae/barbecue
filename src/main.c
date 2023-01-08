@@ -109,7 +109,11 @@ static void tsense_select(void)
 
 static double voltage_to_temp(double v)
 {
-	return 278.642 - 244.739 * v + 108.529 * v * v - 18.5223 * v * v * v;
+	double a = -37.722;
+	double b = 245.275;
+	double c = -567.286;
+	double d = 530.194;
+	return (v * v * v * a) + (v * v * b) + (v * c) + d;
 }
 
 
