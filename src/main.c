@@ -245,8 +245,8 @@ static void tsense_task(void)
 		// 20 bits to 16 bits
 		raw_temp >>= 4;
 
-		// 16 bits to 21 bits to 16 bits
-		raw_temp_avg = (31 * raw_temp_avg + raw_temp) >> 5;
+		// 16 bits to 20 bits to 16 bits
+		raw_temp_avg = (15 * raw_temp_avg + raw_temp) >> 4;
 
 		// 16 bits to 32 bits to 16 bits
 		unsigned mv_temp = raw_temp_avg * 33000 >> 16;
