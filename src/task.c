@@ -359,9 +359,8 @@ void task_sleep_us(uint64_t us)
 		panic("task_sleep_us called from outside of a task");
 
 	task_t task = task_running[core];
-	(void)add_alarm_in_us(us, task_ready_alarm, task, true);
-
 	task_running[core]->waiting = WAITING_FOR_ALARM;
+	(void)add_alarm_in_us(us, task_ready_alarm, task, true);
 	task_yield();
 }
 
@@ -374,9 +373,8 @@ void task_sleep_ms(uint64_t ms)
 		panic("task_sleep_ms called from outside of a task");
 
 	task_t task = task_running[core];
-	(void)add_alarm_in_us(1000 * ms, task_ready_alarm, task, true);
-
 	task_running[core]->waiting = WAITING_FOR_ALARM;
+	(void)add_alarm_in_us(1000 * ms, task_ready_alarm, task, true);
 	task_yield();
 }
 
@@ -389,9 +387,8 @@ void task_yield_until(uint64_t us)
 		panic("task_yield_until called from outside of a task");
 
 	task_t task = task_running[core];
-	(void)add_alarm_at(us, task_ready_alarm, task, true);
-
 	task_running[core]->waiting = WAITING_FOR_ALARM;
+	(void)add_alarm_at(us, task_ready_alarm, task, true);
 	task_yield();
 }
 
