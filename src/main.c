@@ -325,7 +325,7 @@ int main()
 	task_set_ready(tsense_task_id);
 
 	/* Interprets input events. */
-	input_task_id = task_create(input_task, 1024);
+	input_task_id = task_create(input_task, 1536);
 	task_set_name(input_task_id, "input");
 	task_set_ready(input_task_id);
 	task_set_priority(input_task_id, 10);
