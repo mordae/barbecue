@@ -185,7 +185,10 @@ static void screen_task(void)
 	uint64_t last_frame = 0;
 	uint64_t diff_time = 0;
 	unsigned frame_no = 0;
-	unsigned fps = 0;
+	unsigned fps = 60;
+
+	const unsigned target_fps = 30;
+	int sleep = 20000;
 
 	while (true) {
 		uint64_t now = time_us_64();
@@ -193,10 +196,15 @@ static void screen_task(void)
 		last_frame = now;
 		frame_no++;
 
-		if (diff_time >= 1000000) {
-			fps = frame_no;
+		if (diff_time >= 500000) {
+			fps = frame_no * 2;
 			diff_time = 0;
 			frame_no = 0;
+
+			if (fps != target_fps) {
+				int delta = fps - target_fps;
+				sleep += 100 * delta;
+			}
 		}
 
 		char buf[20];
@@ -211,6 +219,10 @@ static void screen_task(void)
 
 		/* Output the buffer. */
 		tft_sync();
+
+		/* Insert delay to control FPS. */
+		if (sleep > 0)
+			task_sleep_us(sleep);
 
 		/* Wait for more data. */
 		task_yield_until_ready();
