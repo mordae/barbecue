@@ -18,6 +18,7 @@
 
 #include <pico/stdlib.h>
 #include <hardware/spi.h>
+#include <hardware/dma.h>
 
 #include <stdio.h>
 #include <string.h>
@@ -75,6 +76,13 @@ uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH >> 1];
 
 extern uint8_t tft_font[256][16];
 
+/* DMA channel to use for transmit. */
+static int dma_ch;
+static dma_channel_config dma_conf;
+
+/* Transfer buffers. */
+static uint8_t txbuf[2][TFT_WIDTH * 2];
+
 
 inline static void select_register(void)
 {
@@ -87,16 +95,32 @@ inline static void select_data(void)
 }
 
 
+static void transmit_blocking(const void *buf, size_t len)
+{
+	dma_channel_wait_for_finish_blocking(dma_ch);
+	size_t wr = spi_write_blocking(TFT_SPI_DEV, buf, len);
+	assert (len == wr);
+}
+
+
+static void transmit_dma(const void *buf, size_t len)
+{
+	dma_channel_wait_for_finish_blocking(dma_ch);
+	dma_channel_configure(dma_ch, &dma_conf,
+			&spi_get_hw(TFT_SPI_DEV)->dr,
+			buf, len, true);
+}
+
+
 /*
  * Change register ID.
  */
 static void write_register(uint8_t reg)
 {
-	select_register();
-
 	uint8_t buf[] = {reg};
-	size_t wr = spi_write_blocking(TFT_SPI_DEV, buf, 1);
-	assert (1 == wr);
+
+	select_register();
+	transmit_blocking(buf, 1);
 }
 
 
@@ -105,23 +129,24 @@ static void write_register(uint8_t reg)
  */
 static void write_word(uint16_t word)
 {
-	select_data();
-
 	uint8_t buf[] = {word >> 8, word};
-	size_t wr = spi_write_blocking(TFT_SPI_DEV, buf, 2);
-	assert (2 == wr);
+
+	select_data();
+	transmit_blocking(buf, 2);
 }
 
 
-/*
- * Write a whole long buffer.
- */
 static void write_buffer(uint8_t *bstr, size_t len)
 {
 	select_data();
+	transmit_blocking(bstr, len);
+}
 
-	size_t wr = spi_write_blocking(TFT_SPI_DEV, bstr, len);
-	assert (wr == len);
+
+static void write_buffer_dma(uint8_t *bstr, size_t len)
+{
+	select_data();
+	transmit_dma(bstr, len);
 }
 
 
@@ -227,6 +252,12 @@ void tft_init(void)
 	gpio_init(TFT_RS_PIN);
 	gpio_set_dir(TFT_RS_PIN, GPIO_OUT);
 
+	printf("ili9225: Configure DMA channel...\n");
+	dma_ch = dma_claim_unused_channel(true);
+	dma_conf = dma_channel_get_default_config(dma_ch);
+	channel_config_set_transfer_data_size(&dma_conf, DMA_SIZE_8);
+	channel_config_set_dreq(&dma_conf, spi_get_dreq(TFT_SPI_DEV, true));
+
 	printf("ili9225: Reset screen...\n");
 
 	gpio_put(TFT_RST_PIN, 0);
@@ -278,8 +309,11 @@ void tft_sync(void)
 	set_register(0x20, 0);
 	set_register(0x21, 0);
 
+	/* Activate GRAM write register. */
+	write_register(0x22);
+
 	for (int y = 0; y < TFT_HEIGHT; y++) {
-		uint8_t txbuf[TFT_WIDTH * 2];
+		uint8_t *buf = txbuf[y & 1];
 
 		for (int x = 0; x < TFT_WIDTH >> 1; x++) {
 			uint8_t twopix = (*committed)[y][x];
@@ -287,17 +321,16 @@ void tft_sync(void)
 			uint16_t left  = tft_palette[(twopix >> 4) & 0b1111];
 			uint16_t right = tft_palette[twopix & 0b1111];
 
-			txbuf[4 * x + 0] = left >> 8;
-			txbuf[4 * x + 1] = left;
-			txbuf[4 * x + 2] = right >> 8;
-			txbuf[4 * x + 3] = right;
+			size_t base = x << 2;
+
+			buf[base + 0] = left >> 8;
+			buf[base + 1] = left;
+			buf[base + 2] = right >> 8;
+			buf[base + 3] = right;
 		}
 
-		/* Activate GRAM write register. */
-		write_register(0x22);
-
-		/* Send the line in buffer. */
-		write_buffer(txbuf, TFT_WIDTH * 2);
+		/* Send the buffer out while we prepare the next one. */
+		write_buffer_dma(buf, TFT_WIDTH << 1);
 	}
 }
 

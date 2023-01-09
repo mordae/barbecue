@@ -8,6 +8,7 @@ target_link_libraries(barbecue
 		      pico_multicore
                       hardware_adc
                       hardware_spi
+                      hardware_dma
                       hardware_timer)
 
 pico_add_extra_outputs(barbecue)
