@@ -328,13 +328,13 @@ int main()
 	input_task_id = task_create(input_task, 1536);
 	task_set_name(input_task_id, "input");
 	task_set_ready(input_task_id);
-	task_set_priority(input_task_id, 10);
+	task_set_priority(input_task_id, 3);
 
 	/* Prints task statistics. */
 	stats_task_id = task_create(stats_task, 1536);
 	task_set_name(stats_task_id, "stats");
 	task_set_ready(stats_task_id);
-	task_set_priority(stats_task_id, -10);
+	task_set_priority(stats_task_id, 1);
 
 	/* Run tasks on the second core. */
 	multicore_reset_core1();
