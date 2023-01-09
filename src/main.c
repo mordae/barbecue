@@ -107,16 +107,6 @@ static void tsense_select(void)
 }
 
 
-static double voltage_to_temp(double v)
-{
-	double a = -37.722;
-	double b = 245.275;
-	double c = -567.286;
-	double d = 530.194;
-	return (v * v * v * a) + (v * v * b) + (v * c) + d;
-}
-
-
 inline static int wrap(int x, int limit)
 {
 	return (limit + x) % limit;
@@ -175,7 +165,7 @@ static void update_sparkline(double temp)
 		y += 17;
 
 	char buf[20];
-	sprintf(buf, "%7.2f \260C", temp);
+	sprintf(buf, "%7.1f \260C", temp);
 	tft_draw_string(WIDTH - 1 - strlen(buf) * 8, y - 16, 5, buf);
 }
 
@@ -230,10 +220,20 @@ static void screen_task(void)
 }
 
 
+inline static double voltage_to_temp(double v)
+{
+	double a = -37.722;
+	double b = 245.275;
+	double c = -567.286;
+	double d = 530.194;
+	return (v * v * v * a) + (v * v * b) + (v * c) + d;
+}
+
+
 static void tsense_task(void)
 {
 	/* Incremental thermistor ADC measurements average. */
-	double raw_temp_avg = (256 * 4096) >> 4;
+	unsigned raw_temp_avg = (256 * 4096) >> 4;
 
 	while (true) {
 		unsigned raw_temp = 0;
@@ -245,19 +245,22 @@ static void tsense_task(void)
 		// 20 bits to 16 bits
 		raw_temp >>= 4;
 
-		raw_temp_avg = (31.0 * raw_temp_avg + raw_temp) / 32.0;
+		// 16 bits to 21 bits to 16 bits
+		raw_temp_avg = (31 * raw_temp_avg + raw_temp) >> 5;
 
-		double v_temp = raw_temp_avg * 3.3 / (1 << 16);
-		double temp = voltage_to_temp(v_temp);
+		// 16 bits to 32 bits to 16 bits
+		unsigned mv_temp = raw_temp_avg * 33000 >> 16;
+
+		double temp = voltage_to_temp(mv_temp / 10000.0);
 
 		tft_fill(0);
 		update_sparkline(temp);
 
 		char buf[20];
-		sprintf(buf, "%7.2f mV", v_temp * 1000.0);
+		sprintf(buf, "%4u.%u mV", mv_temp / 10, mv_temp % 10);
 		tft_draw_string(70, 16 * 4, 3, buf);
 
-		sprintf(buf, "%7.2f \260C", temp);
+		sprintf(buf, "%6.1f \260C", temp);
 		tft_draw_string(70, 16 * 3, 3, buf);
 
 		/* Unblock the display output task. */
