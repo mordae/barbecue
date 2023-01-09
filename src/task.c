@@ -158,6 +158,8 @@ static int task_select(void)
 
 void task_init(void)
 {
+	alarm_pool_init_default();
+
 	lock = spin_lock_init(spin_lock_claim_unused(true));
 
 	for (int i = 0; i < NUM_CORES; i++) {
