@@ -40,6 +40,7 @@ struct state {
 	alarm_id_t re_alarm;
 	uint8_t state;
 	bool sw : 1;
+	int prev_direction : 3;
 };
 
 
@@ -227,6 +228,19 @@ __isr static void __no_inline_not_in_flash_func(irq_handler_re)(void)
 			speed = st->sens - delta;
 			speed *= speed;
 		}
+
+		/*
+		 * The trouble is that when the speed is too high, it is no
+		 * longer possible to tell the direction correctly. So let's
+		 * just assume it stayed the same. It would be too hard for
+		 * a human to reverse the direction of rotation that fast.
+		 *
+		 * The threshold for that is about 2 milliseconds.
+		 */
+		if (delta <= 1)
+			direction = st->prev_direction;
+
+		st->prev_direction = direction;
 
 		struct renc_event event = {
 			.num = i,
