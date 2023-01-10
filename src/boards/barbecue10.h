@@ -64,4 +64,4 @@
 #define RENC_SW_PIN 23
 #define RENC_CW_PIN 25
 #define RENC_CCW_PIN 24
-#define RENC_SENS 10
+#define RENC_SENS 20

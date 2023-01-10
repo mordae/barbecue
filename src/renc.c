@@ -17,271 +17,229 @@
 #include "renc.h"
 
 #include <stdint.h>
+#include <string.h>
 #include <stdio.h>
 
 
-#define DEBOUNCE_US 1000
+/* How many microseconds to wait in order to resolve possible bounce. */
+#if !defined(RENC_DEBOUNCE_US)
+# define RENC_DEBOUNCE_US 1000
+#endif
 
+/* How many events can the queue hold. */
+#if !defined(RENC_QUEUE_SIZE)
+# define RENC_QUEUE_SIZE 16
+#endif
 
-enum {
-	DIR_CW	= 0x08,
-	DIR_CCW	= 0x10,
-};
-
-enum {
-	R_START = 0,
-	R_ERROR,
-	R_CCW_1,
-	R_CCW_2,
-	R_CCW_3,
-	R_CW_1,
-	R_CW_2,
-	R_CW_3,
-};
-
-static const uint8_t state_table[8][4] = {
-	{R_START,         R_CCW_1, R_CW_1,  R_ERROR}, // 0 R_START
-	{R_START,         R_ERROR, R_ERROR, R_ERROR}, // 1 R_ERROR
-
-	{R_START,         R_CCW_1, R_CW_1,  R_CCW_2}, // 2 R_CCW_1
-	{R_START,         R_CCW_1, R_CCW_3, R_CCW_2}, // 3 R_CCW_2
-	{R_START|DIR_CCW, R_CCW_1, R_CCW_3, R_CCW_2}, // 4 R_CCW_3
-
-	{R_START,         R_CCW_1, R_CW_1,  R_CW_2},  // 5 R_CW_1
-	{R_START,         R_CW_3,  R_CW_1,  R_CW_2},  // 6 R_CW_2
-	{R_START|DIR_CW,  R_CW_3,  R_CW_1,  R_CW_2},  // 7 R_CW_3
-};
 
 struct state {
 	uint8_t cw_pin, ccw_pin, sw_pin, sens;
-	uint8_t state : 5;
-	bool sw : 1;
-	bool cw : 1;
-	bool ccw : 1;
 	uint32_t sw_mtime;
 	uint32_t re_mtime;
+	alarm_id_t sw_alarm;
+	alarm_id_t re_alarm;
+	uint8_t state;
+	bool sw : 1;
 };
 
 
 /* Encoder state machines. */
 static struct state state[NUM_RENC];
 
-/* Output queue. */
-queue_t renc_queue;
-
-/* Alarm for switch debouncing. */
-static alarm_id_t alarm_id;
+/* Interrupt handler event queue. */
+static queue_t queue;
 
 
-__force_inline static int clamp(int x, int min, int max)
-{
-	if (x < min)
-		return min;
-
-	if (x > max)
-		return max;
-
-	return x;
-}
-
-
-__force_inline static unsigned bit(unsigned n)
-{
-	return 1 << n;
-}
-
-
-static void __no_inline_not_in_flash_func(update_state)(struct state *st)
-{
-	uint8_t pin_state = (st->cw << 1) | st->ccw;
-
-	st->state = state_table[st->state & 0x7][pin_state];
-
-	if (st->state & (DIR_CW | DIR_CCW)) {
-		uint32_t now = time_us_32() >> 10;
-
-		if (now <= st->re_mtime) {
-			st->re_mtime = now - 1;
-		} else if (now - st->re_mtime > st->sens) {
-			st->re_mtime = now - st->sens;
-		}
-
-		int speed = st->sens / (now - st->re_mtime);
-		st->re_mtime = now;
-
-		speed = speed * speed;
-
-		struct renc_event event = {
-			.num = st - &state[0],
-		};
-
-		if (st->state & DIR_CW) {
-			st->state &= 0xf;
-			event.steps = speed;
-		} else if (st->state & DIR_CCW) {
-			st->state &= 0xf;
-			event.steps = -speed;
-		}
-
-		(void)queue_try_add(&renc_queue, &event);
-	}
-}
-
-
-__force_inline static bool update_cw(struct state *st, unsigned events)
-{
-	bool cw;
-
-	if (events == GPIO_IRQ_EDGE_FALL) {
-		cw = true;
-	} else if (events == GPIO_IRQ_EDGE_RISE) {
-		cw = false;
-	} else {
-		return false;
-	}
-
-	if (cw == st->cw)
-		return false;
-
-	st->cw = cw;
-	return true;
-}
-
-
-__force_inline static bool update_ccw(struct state *st, unsigned events)
-{
-	bool ccw;
-
-	if (events == GPIO_IRQ_EDGE_FALL) {
-		ccw = true;
-	} else if (events == GPIO_IRQ_EDGE_RISE) {
-		ccw = false;
-	} else {
-		return false;
-	}
-
-	if (ccw == st->ccw)
-		return false;
-
-	st->ccw = ccw;
-	return true;
-}
-
-
+/*
+ * Alarm handler for `irq_handler_sw`.
+ * See below for more information.
+ */
 static int64_t __no_inline_not_in_flash_func(debounce)(alarm_id_t id, void *arg)
 {
-	/* Bounce alarm timed out. */
-	alarm_id = -1;
-
 	struct state *st = arg;
-	const bool sw = !gpio_get(st->sw_pin);
 
-	if (sw == st->sw) {
-		/* No change. No need to do anything. */
+	/* Alarm has timed out and we got called. Clear the handle. */
+	st->sw_alarm = -1;
+
+	/* Read the current state. */
+	bool sw = !gpio_get(st->sw_pin);
+
+	/* Filter out repeated events as usual. */
+	if (st->sw == sw)
 		return 0;
-	}
 
+	/*
+	 * Update the state. We more-or-less trust this value, since human
+	 * would not be able to repeat a button cycle this fast.
+	 *
+	 * If they are carefully holding the switch mid-press, they are going
+	 * to be able to produce valid strings of random toggles though.
+	 */
 	st->sw = sw;
 
+	/* Emit the event. */
 	struct renc_event event = {
 		.num = st - &state[0],
 		.sw = sw,
 	};
-
-	(void)queue_try_add(&renc_queue, &event);
-
+	(void)queue_try_add(&queue, &event);
 	return 0;
 }
 
 
-static void __no_inline_not_in_flash_func(update_sw)(struct state *st, unsigned events)
+__isr static void __no_inline_not_in_flash_func(irq_handler_sw)(void)
 {
-	bool sw;
-
-	if (events & GPIO_IRQ_EDGE_FALL) {
-		sw = true;
-	} else if (events & GPIO_IRQ_EDGE_RISE) {
-		sw = false;
-	} else {
-		/* This should not happen. */
-		return;
-	}
-
-	if (sw == st->sw) {
-		/* No change. */
-		return;
-	}
-
-	const uint32_t prev = st->sw_mtime;
-	const uint32_t now = time_us_32();
-
-	if (alarm_id >= 0) {
-		/* Cancel bounce timer, this happened earlier. */
-		cancel_alarm(alarm_id);
-		alarm_id = -1;
-	}
-
-	if (now - prev < DEBOUNCE_US) {
-		/* Possible switch bounce.
-		 * Start alarm and read the actual value then. */
-		alarm_id = add_alarm_in_us(DEBOUNCE_US, debounce, st, true);
-		return;
-	}
-
-	/* There was long enough delay since the last event,
-	 * consider this event final. */
-	st->sw_mtime = now;
-	st->sw = sw;
-
-	struct renc_event event = {
-		.num = st - &state[0],
-		.sw = sw,
-	};
-
-	(void)queue_try_add(&renc_queue, &event);
-}
-
-
-__isr static void __no_inline_not_in_flash_func(irq_handler)(void)
-{
-	unsigned event_mask = GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL;
+	const unsigned event_mask = GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL;
 
 	for (int i = 0; i < NUM_RENC; i++) {
 		struct state *st = &state[i];
-		unsigned events;
-		bool changed = false;
 
 		/* Skip unconfigured encoders. */
 		if (st->cw_pin == st->ccw_pin)
 			continue;
 
-		events = gpio_get_irq_event_mask(st->cw_pin);
+		unsigned events = gpio_get_irq_event_mask(st->sw_pin);
 		if (events & event_mask) {
-			gpio_acknowledge_irq(st->cw_pin, event_mask);
-			changed |= update_cw(&state[i], events);
-		}
-
-		events = gpio_get_irq_event_mask(st->ccw_pin);
-		if (events & event_mask) {
-			gpio_acknowledge_irq(st->ccw_pin, event_mask);
-			changed |= update_ccw(&state[i], events);
-		}
-
-		events = gpio_get_irq_event_mask(st->sw_pin);
-		if (events & event_mask) {
+			/* Acknowledge interrupt. */
 			gpio_acknowledge_irq(st->sw_pin, event_mask);
-			update_sw(&state[i], events);
-		}
 
-		if (changed)
-			update_state(&state[i]);
+			/* Read current switch state. */
+			bool sw = !gpio_get(st->sw_pin);
+
+			/* Filter out repeated events. */
+			if (st->sw == sw)
+				continue;
+
+			/*
+			 * We might have set up an alarm to combat bounce.
+			 * If we did, we need to cancel it since another
+			 * interrupt (this one) occured sooner.
+			 */
+			if (st->sw_alarm >= 0) {
+				cancel_alarm(st->sw_alarm);
+				st->sw_alarm = -1;
+			}
+
+			/*
+			 * If the switch state changes too fast, it might be
+			 * a bounce. Humans are not that fast.
+			 */
+			uint32_t prev = st->sw_mtime;
+			uint32_t now = time_us_32();
+
+			if (now - prev < RENC_DEBOUNCE_US) {
+				/* We are going to follow up on this change. */
+				st->sw_alarm = add_alarm_in_us(RENC_DEBOUNCE_US, debounce, st, true);
+
+				/* But we ignore it for now. */
+				continue;
+			}
+
+			/* There was long enough delay, so we trust this value. */
+			st->sw_mtime = now;
+			st->sw = sw;
+
+			/* Emit the event. */
+			struct renc_event event = {
+				.num = i,
+				.sw  = st->sw,
+			};
+			(void)queue_try_add(&queue, &event);
+		}
 	}
 }
 
 
-void renc_init(unsigned q_size)
+__isr static void __no_inline_not_in_flash_func(irq_handler_re)(void)
 {
-	queue_init(&renc_queue, sizeof(struct renc_event), q_size);
+	const unsigned event_mask = GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL;
+
+	for (int i = 0; i < NUM_RENC; i++) {
+		struct state *st = &state[i];
+
+		/* Skip unconfigured encoders. */
+		if (st->cw_pin == st->ccw_pin)
+			continue;
+
+		/* Acknowledge interrupts. */
+		gpio_acknowledge_irq(st->cw_pin, event_mask);
+		gpio_acknowledge_irq(st->ccw_pin, event_mask);
+
+		/* Read the values anew. This is somewhat more
+		 * reliable than counting the edges. */
+		unsigned cw = !gpio_get(st->cw_pin);
+		unsigned ccw = !gpio_get(st->ccw_pin);
+
+		/* Shift in new encoder state. */
+		uint8_t state0 = (st->state << 2) & 0b111100 | (ccw << 1) | cw;
+
+		/*
+		 * Only some transitions are valid. Namely those where new
+		 * state is different from the old one and a not all bits
+		 * are flipped at once.
+		 *
+		 * I have no idea how to calculate parity quickly on M0 CPU,
+		 * so we just encode the truth table into 16 bits and look
+		 * the transition up using bit shift.
+		 */
+		uint16_t valid = 0b0110100110010110;
+		if (!((valid >> (state0 & 0b1111)) & 1))
+			continue;
+
+		/* Remember this new state. */
+		st->state = state0;
+
+		/* Finally, did we travel a whole step yet? */
+		int direction = 0;
+
+		/*
+		 * 01-11-10 indicates clockwise step.
+		 * 10-11-01 indicates a counterclockwise step.
+		 */
+		if (0b011110 == state0)
+			direction = 1;
+		else if (0b101101 == state0)
+			direction = -1;
+
+		/* If not, we are done here for now. */
+		if (!direction)
+			continue;
+
+		/*
+		 * Calculate how long it took since the last step.
+		 */
+		uint32_t prev = st->re_mtime;
+		uint32_t now = time_us_32();
+		st->re_mtime = now;
+
+		/*
+		 * If the steps follow shortly one after another, it means
+		 * the human is turning the encoder quickly. Meaning we can
+		 * generate some extra ticks for them to make it easier.
+		 *
+		 * We divide by 1024 instead of 1000 to get milliseconds
+		 * because we do not need much precision here.
+		 */
+		int delta = (now - prev) >> 10;
+		int speed = 1;
+
+		if (delta < st->sens) {
+			speed = st->sens - delta;
+			speed *= speed;
+		}
+
+		struct renc_event event = {
+			.num = i,
+			.steps = direction * speed,
+		};
+		(void)queue_try_add(&queue, &event);
+	}
+}
+
+
+void renc_init(void)
+{
+	queue_init(&queue, sizeof(struct renc_event), RENC_QUEUE_SIZE);
 	alarm_pool_init_default();
 	irq_set_enabled(IO_IRQ_BANK0, true);
 }
@@ -306,12 +264,18 @@ void renc_config(unsigned num, uint8_t cw_pin, uint8_t ccw_pin, uint8_t sw_pin, 
 	gpio_set_dir(sw_pin, false);
 	gpio_pull_up(sw_pin);
 
-	gpio_add_raw_irq_handler(cw_pin, irq_handler);
-	gpio_add_raw_irq_handler(ccw_pin, irq_handler);
-	gpio_add_raw_irq_handler(sw_pin, irq_handler);
+	gpio_add_raw_irq_handler(sw_pin, irq_handler_sw);
+	gpio_add_raw_irq_handler(cw_pin, irq_handler_re);
+	gpio_add_raw_irq_handler(ccw_pin, irq_handler_re);
 
 	unsigned event_mask = GPIO_IRQ_EDGE_RISE | GPIO_IRQ_EDGE_FALL;
+	gpio_set_irq_enabled(sw_pin, event_mask, true);
 	gpio_set_irq_enabled(cw_pin, event_mask, true);
 	gpio_set_irq_enabled(ccw_pin, event_mask, true);
-	gpio_set_irq_enabled(sw_pin, event_mask, true);
+}
+
+
+void renc_read_blocking(struct renc_event *event)
+{
+	(void)queue_remove_blocking(&queue, event);
 }

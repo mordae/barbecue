@@ -274,10 +274,13 @@ static void tsense_task(void)
 
 static void input_task(void)
 {
+	/* Initialize the rotary encoder. */
+	renc_init();
+	renc_config(0, RENC_CW_PIN, RENC_CCW_PIN, RENC_SW_PIN, RENC_SENS);
+
 	while (true) {
 		struct renc_event event;
-
-		queue_remove_blocking(&renc_queue, &event);
+		renc_read_blocking(&event);
 		printf("RE: num=%u sw=%u steps=%i\n",
 		       event.num, event.sw, event.steps);
 	}
@@ -319,10 +322,6 @@ int main()
 
 	/* Initialize the TFT screen. */
 	tft_init();
-
-	/* Initialize the rotary encoder. */
-	renc_init(16);
-	renc_config(0, RENC_CW_PIN, RENC_CCW_PIN, RENC_SW_PIN, RENC_SENS);
 
 	/* Initialize the temperature probe. */
 	tsense_init();

@@ -23,10 +23,6 @@
 #include <stdint.h>
 
 
-/* Queue to read events from. */
-extern queue_t renc_queue;
-
-
 /* Number of rotary encoders. */
 #if !defined(NUM_RENC)
 # define NUM_RENC 4
@@ -36,8 +32,8 @@ extern queue_t renc_queue;
 /*
  * Rotary encoder event.
  *
- * Switch changes and deltas are never produced simultaneously.
- * Switch state is only valid when delta is 0.
+ * Switch state and steps are always produced separately.
+ * Only use `sw` when `steps` are 0.
  */
 struct renc_event {
 	/* Rotary encoder number. */
@@ -55,12 +51,13 @@ struct renc_event {
 
 /*
  * Initialize rotary encoders.
- *
- * Registers interrupt handlers that control the state machines and
- * initialize the `renc_queue` to hold `q_size` events.
  */
-void renc_init(unsigned q_size);
+void renc_init(void);
 
 
 /* Configure given rotary encoder. */
 void renc_config(unsigned num, uint8_t cw_pin, uint8_t ccw_pin, uint8_t sw_pin, uint8_t sens);
+
+
+/* Read next encoder event or block. */
+void renc_read_blocking(struct renc_event *event);
