@@ -222,10 +222,10 @@ static void screen_task(void)
 
 inline static double voltage_to_temp(double v)
 {
-	double a = -37.722;
-	double b = 245.275;
-	double c = -567.286;
-	double d = 530.194;
+	double a = -20.960;
+	double b = 115.584;
+	double c = -234.160;
+	double d = 244.833;
 	return (v * v * v * a) + (v * v * b) + (v * c) + d;
 }
 
