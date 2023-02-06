@@ -25,6 +25,8 @@
 #include <setjmp.h>
 #include <stdio.h>
 
+#define HUNG_TIMEOUT 1000000
+
 
 enum {
 	R4 = 0,
@@ -56,25 +58,28 @@ struct task {
 	uint32_t *stack;
 
 	/* Size of the stack. */
-	size_t stack_size;
-
-	/* Task priority. High priority tasks run first. */
-	int pri;
+	uint32_t stack_size;
 
 	/* '\0'-terminated task name. */
 	char name[12];
 
 	/* Timestamp when was the task resumed the last time. */
-	uint32_t resumed_at;
+	uint64_t resumed_at;
 
 	/* Reason the task is waiting. */
-	enum wait_reason waiting;
+	enum wait_reason waiting : 3;
+
+	/* Lock for which the task is waiting. */
+	uint32_t lock_id : 5;
+
+	/* Task priority. High priority tasks run first. */
+	int8_t pri : 8;
 
 	/* How many times to undo NOT_READY status. */
-	unsigned goodwill;
+	uint8_t goodwill : 8;
 
-	/* Stack must be 8-byte aligned. */
-	uint32_t _align_pad;
+	/* To pad the struct to 128 bytes. */
+	uint8_t _align_pad_8;
 
 	/* Stack top canary. */
 	uint32_t canary;
@@ -93,7 +98,7 @@ task_t task_avail[NUM_CORES][MAX_TASKS] = {0};
 
 task_stats_t task_stats[NUM_CORES][MAX_TASKS] = {0};
 
-static bool task_lock_notify[NUM_CORES] = {0};
+static volatile uint32_t task_lock_notify[NUM_CORES][NUM_SPIN_LOCKS] = {0};
 
 
 /* Saved scheduler context for respective cores. */
@@ -119,7 +124,7 @@ static void task_sentinel(void)
 
 static int task_select(void)
 {
-	static size_t offset[NUM_CORES] = {};
+	static size_t offset[NUM_CORES] = {0};
 
 	unsigned core = get_core_num();
 	int best_task_id = -1;
@@ -150,9 +155,30 @@ static int task_select(void)
 		}
 	}
 
-	offset[core] = (offset[core] + 1) % MAX_TASKS;
+	if (best_task_id >= 0)
+		offset[core] = (offset[core] + 1) % MAX_TASKS;
 
 	return best_task_id;
+}
+
+
+static int64_t task_hung_alarm(alarm_id_t id, void *arg)
+{
+	for (int i = 0; i < NUM_CORES; i++) {
+		task_t task = task_running[i];
+
+		if (!task)
+			continue;
+
+		uint64_t running = time_us_64() - task->resumed_at;
+
+		if (running > HUNG_TIMEOUT) {
+			printf("task: hung task detected: %s (%us)\n",
+			       task->name, (uint32_t)(running / 1000000));
+		}
+	}
+
+	return -HUNG_TIMEOUT;
 }
 
 
@@ -166,6 +192,9 @@ void task_init(void)
 		task_running[i] = NULL;
 		memset(task_avail[i], 0, sizeof(task_avail[i]));
 	}
+
+	/* Start hung task detector. */
+	(void)add_alarm_in_us(HUNG_TIMEOUT, task_hung_alarm, NULL, true);
 }
 
 
@@ -175,13 +204,24 @@ bool task_run(void)
 
 	__dmb();
 
-	if (task_lock_notify[core]) {
-		task_lock_notify[core] = false;
+	/* Unblock all tasks waiting for locks. */
+	for (int i = 0; i < MAX_TASKS; i++) {
+		task_t task = task_avail[core][i];
 
-		/* Unblock all tasks waiting for locks. */
-		for (int i = 0; i < MAX_TASKS; i++)
-			if (WAITING_FOR_LOCK == task_avail[core][i]->waiting)
-				task_avail[core][i]->waiting = READY;
+		if (NULL == task)
+			continue;
+
+		if (WAITING_FOR_LOCK != task->waiting)
+			continue;
+
+		if ((task_lock_notify[core][task->lock_id])) {
+			task->waiting = READY;
+			task->lock_id = 0;
+		}
+	}
+
+	for (int i = 0; i < NUM_SPIN_LOCKS; i++) {
+		task_lock_notify[core][i] = false;
 	}
 
 	int task_no = task_select();
@@ -196,14 +236,14 @@ bool task_run(void)
 
 	if (TASK_SAVE == status) {
 		task_stats[core][task_no].resumed++;
-		task_avail[core][task_no]->resumed_at = time_us_32();
+		task_avail[core][task_no]->resumed_at = time_us_64();
 		task_running[core] = task;
 		longjmp(task->regs, (int)task);
 	}
 
 	if (TASK_YIELD == status) {
-		uint32_t since = task->resumed_at;
-		task_stats[core][task_no].total_us += time_us_32() - since;
+		uint64_t since = task->resumed_at;
+		task_stats[core][task_no].total_us += time_us_64() - since;
 		task_running[core] = NULL;
 
 		if (0xdeadbeef != task->canary)
@@ -242,8 +282,7 @@ __noreturn void task_run_loop(void)
 {
 	while (true) {
 		/* Work until we run out of ready tasks. */
-		while (task_run())
-			/* loop */;
+		while (task_run());
 
 		/*
 		 * Sleep until an interrupt or event happens.
@@ -336,7 +375,15 @@ void task_set_ready(task_t task)
 }
 
 
-void task_set_priority(task_t task, int pri)
+void task_notify_all(void)
+{
+	for (int i = 0; i < NUM_CORES; i++)
+		for (int l = 0; l < NUM_SPIN_LOCKS; l++)
+			task_lock_notify[i][l] = true;
+}
+
+
+void task_set_priority(task_t task, int8_t pri)
 {
 	task->pri = pri;
 }
@@ -395,7 +442,7 @@ void task_yield_until(uint64_t us)
 }
 
 
-int task_get_priority(task_t task)
+int8_t task_get_priority(task_t task)
 {
 	return task->pri;
 }
@@ -464,9 +511,17 @@ void task_stats_report_reset(unsigned core)
 
 		unsigned stack = stack_free_space(task);
 
-		printf("task: %2i (%4i %s+%i) [%-11s] [%4u] %5ux = %8u us = %3u%%\n",
-		       i, task->pri, flags, task->goodwill, task->name, stack,
-		       stats->resumed, stats->total_us, percent);
+		if (WAITING_FOR_LOCK == task->waiting) {
+			printf("task: %2i (%-2i %s=%-2i+%i) [%-11s] [%4u] %5ux = %8u us = %3u%%\n",
+				i, task->pri, flags, task->lock_id,
+				task->goodwill, task->name, stack,
+				stats->resumed, stats->total_us, percent);
+		} else {
+			printf("task: %2i (%-2i %s   +%i) [%-11s] [%4u] %5ux = %8u us = %3u%%\n",
+				i, task->pri, flags,
+				task->goodwill, task->name, stack,
+				stats->resumed, stats->total_us, percent);
+		}
 	}
 
 	task_stats_reset(core);
@@ -487,14 +542,11 @@ void task_lock_spin_unlock_with_notify(volatile unsigned long *lock, unsigned lo
 {
 	spin_unlock(lock, save);
 
-	unsigned core = get_core_num();
-	task_t task = task_running[core];
+	/* Make schedulers unblock tasks waiting for this lock. */
+	uint32_t lock_id = ((uint32_t)lock >> 2) & 0x1f;
 
-	if (task) {
-		/* Make schedulers unblock tasks waiting for locks. */
-		for (int i = 0; i < NUM_CORES; i++)
-			task_lock_notify[i] = true;
-	}
+	for (int i = 0; i < NUM_CORES; i++)
+		task_lock_notify[i][lock_id] = true;
 
 	/* Unblock the schedulers. */
 	__sev();
@@ -509,6 +561,7 @@ void task_lock_spin_unlock_with_wait(volatile unsigned long *lock, unsigned long
 
 	if (task) {
 		task->waiting = WAITING_FOR_LOCK;
+		task->lock_id = ((uint32_t)lock >> 2) & 0x1f;
 		task_yield();
 	} else {
 		__wfe();
@@ -524,6 +577,7 @@ int task_lock_spin_unlock_with_timeout(volatile unsigned long *lock, unsigned lo
 
 	if (task) {
 		task->waiting = WAITING_FOR_LOCK;
+		task->lock_id = ((uint32_t)lock >> 2) & 0x1f;
 		task_yield();
 		return time_us_64() >= time;
 	} else {

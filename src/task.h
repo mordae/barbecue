@@ -130,9 +130,13 @@ void task_yield_until(uint64_t us);
 void task_set_ready(task_t task);
 
 
+/* Wake all tasks blocked on locks. */
+void task_notify_all(void);
+
+
 /* Manage task priority. Higher priority tasks run first. */
-void task_set_priority(task_t task, int pri);
-int task_get_priority(task_t task);
+void task_set_priority(task_t task, int8_t pri);
+int8_t task_get_priority(task_t task);
 
 
 /* Manage task name of up to 11 bytes. */

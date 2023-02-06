@@ -15,6 +15,7 @@
  */
 
 #include "renc.h"
+#include "task.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -31,13 +32,22 @@
 # define RENC_QUEUE_SIZE 16
 #endif
 
+/* Below how many milliseconds fixate the direction. */
+#if !defined(RENC_FIX_DIR_MS)
+# define RENC_FIX_DIR_MS 50
+#endif
+
+/* Under how many milliseconds discard completely. */
+#if !defined(RENC_DISCARD_MS)
+# define RENC_DISCARD_MS 5
+#endif
+
 
 struct state {
 	uint8_t cw_pin, ccw_pin, sw_pin, sens;
 	uint32_t sw_mtime;
 	uint32_t re_mtime;
 	alarm_id_t sw_alarm;
-	alarm_id_t re_alarm;
 	uint8_t state;
 	bool sw : 1;
 	int prev_direction : 3;
@@ -219,9 +229,15 @@ __isr static void __no_inline_not_in_flash_func(irq_handler_re)(void)
 		 * generate some extra ticks for them to make it easier.
 		 *
 		 * We divide by 1024 instead of 1000 to get milliseconds
-		 * because we do not need much precision here.
+		 * because we do not need much precision here and proper
+		 * division is costly.
 		 */
 		int delta = (now - prev) >> 10;
+
+		/* Steps too close to each other are impossible for humans. */
+		if (delta < RENC_DISCARD_MS)
+			continue;
+
 		int speed = 1;
 
 		if (delta < st->sens) {
@@ -231,13 +247,12 @@ __isr static void __no_inline_not_in_flash_func(irq_handler_re)(void)
 
 		/*
 		 * The trouble is that when the speed is too high, it is no
-		 * longer possible to tell the direction correctly. So let's
-		 * just assume it stayed the same. It would be too hard for
-		 * a human to reverse the direction of rotation that fast.
-		 *
-		 * The threshold for that is about 2 milliseconds.
+		 * longer possible to tell the direction correctly because
+		 * some of the states get skipped. So let's just assume it
+		 * stayed the same. It would be too hard for a human to
+		 * reverse the direction of rotation that fast.
 		 */
-		if (delta <= 1)
+		if (delta < RENC_FIX_DIR_MS)
 			direction = st->prev_direction;
 
 		st->prev_direction = direction;

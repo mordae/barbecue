@@ -40,47 +40,21 @@ static task_t stats_task_id;
 
 static void pwm123_init(void)
 {
-	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(FAN1_P_PIN);
-	gpio_disable_pulls(FAN1_P_PIN);
-	gpio_put(FAN1_P_PIN, 0);
-	gpio_set_drive_strength(FAN1_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_set_dir(FAN1_P_PIN, GPIO_IN);
+	gpio_init(FAN1_PIN);
+	gpio_init(FAN2_PIN);
+	gpio_init(HEAT_PIN);
 
-	/* Pull = Disabled */
-	gpio_init(FAN1_N_PIN);
-	gpio_disable_pulls(FAN1_N_PIN);
-	gpio_set_dir(FAN1_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(FAN1_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(FAN1_N_PIN, 0);
+	gpio_put(FAN1_PIN, 0);
+	gpio_put(FAN2_PIN, 0);
+	gpio_put(HEAT_PIN, 0);
 
-	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(FAN2_P_PIN);
-	gpio_disable_pulls(FAN2_P_PIN);
-	gpio_put(FAN2_P_PIN, 0);
-	gpio_set_drive_strength(FAN2_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_set_dir(FAN2_P_PIN, GPIO_IN);
+	gpio_set_dir(FAN1_PIN, GPIO_OUT);
+	gpio_set_dir(FAN2_PIN, GPIO_OUT);
+	gpio_set_dir(HEAT_PIN, GPIO_OUT);
 
-	/* Pull = Disabled */
-	gpio_init(FAN2_N_PIN);
-	gpio_disable_pulls(FAN2_N_PIN);
-	gpio_set_dir(FAN2_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(FAN2_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(FAN2_N_PIN, 0);
-
-	/* Push = High-Z (external pull-up) = Disabled */
-	gpio_init(PLATE_P_PIN);
-	gpio_disable_pulls(PLATE_P_PIN);
-	gpio_put(PLATE_P_PIN, 0);
-	gpio_set_drive_strength(PLATE_P_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_set_dir(PLATE_P_PIN, GPIO_IN);
-
-	/* Pull = Disabled */
-	gpio_init(PLATE_N_PIN);
-	gpio_disable_pulls(PLATE_N_PIN);
-	gpio_set_dir(PLATE_N_PIN, GPIO_OUT);
-	gpio_set_drive_strength(PLATE_N_PIN, GPIO_DRIVE_STRENGTH_2MA);
-	gpio_put(PLATE_N_PIN, 0);
+	gpio_disable_pulls(FAN1_PIN);
+	gpio_disable_pulls(FAN2_PIN);
+	gpio_disable_pulls(HEAT_PIN);
 }
 
 
@@ -252,6 +226,18 @@ static void tsense_task(void)
 		unsigned mv_temp = raw_temp_avg * 33000 >> 16;
 
 		double temp = voltage_to_temp(mv_temp / 10000.0);
+
+		if (temp < 30.0) {
+			gpio_put(HEAT_PIN, 1);
+		} else {
+			gpio_put(HEAT_PIN, 0);
+		}
+
+		if (temp > 25.0) {
+			gpio_put(FAN1_PIN, 1);
+		} else {
+			gpio_put(FAN1_PIN, 0);
+		}
 
 		tft_fill(0);
 		update_sparkline(temp);
