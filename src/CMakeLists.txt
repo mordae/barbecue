@@ -1,5 +1,5 @@
-#set(DISPLAY ili9225)
-set(DISPLAY st7735)
+SET(DISPLAY "st7735" CACHE STRING "Display type: ili9925 or st7735")
+SET_PROPERTY(CACHE DISPLAY PROPERTY STRINGS ili9925 st7735)
 
 add_executable(barbecue main.c ${DISPLAY}.c font.c task.c renc.c scene.c)
 
