@@ -22,8 +22,7 @@
 #include <tusb.h>
 #include <math.h>
 
-//#include "ili9225.h"
-#include "st7735.h"
+#include "tft.h"
 
 #include "renc.h"
 #include "task.h"
@@ -90,7 +89,7 @@ inline static int wrap(int x, int limit)
 
 
 /* History of temperatures. */
-static double history[TFT_WIDTH] = {0.0};
+static double history[256] = {0.0};
 static unsigned history_offset = 0;
 
 
@@ -102,12 +101,12 @@ static void update_sparkline(double temp)
 
 	temp_avg = 0.99 * temp_avg + 0.01 * temp;
 
-	history_offset = wrap(history_offset + 1, TFT_WIDTH);
+	history_offset = wrap(history_offset + 1, tft_width);
 	history[history_offset] = temp;
 
 	double temp_min = 1000, temp_max = 0;
 
-	for (int i = 0; i < TFT_WIDTH; i++) {
+	for (int i = 0; i < tft_width; i++) {
 		temp_min = fmin(temp_min, history[i]);
 		temp_max = fmax(temp_max, history[i]);
 	}
@@ -118,29 +117,29 @@ static void update_sparkline(double temp)
 	temp_min = fmin(fmin(temp_min_avg, temp_min), temp_avg - 0.5);
 	temp_max = fmax(fmax(temp_max_avg, temp_max), temp_avg + 0.5);
 
-	for (int i = 0; i < TFT_WIDTH; i++) {
-		int h = wrap(history_offset + 1 + i, TFT_WIDTH);
+	for (int i = 0; i < tft_width; i++) {
+		int h = wrap(history_offset + 1 + i, tft_width);
 		double temp_adj = (history[h] - temp_min) / (temp_max - temp_min);
-		int y = (TFT_HEIGHT - 1) * temp_adj;
+		int y = (tft_height - 1) * temp_adj;
 		tft_draw_pixel(i, y, 7);
 	}
 
 	double avg = (temp_avg - temp_min) / (temp_max - temp_min);
-	int y = (TFT_HEIGHT - 1) * avg;
-	tft_draw_rect(0, y, TFT_WIDTH - 1, y, 5);
+	int y = (tft_height - 1) * avg;
+	tft_draw_rect(0, y, tft_width - 1, y, 5);
 
-	if (y < TFT_HEIGHT - 20)
+	if (y < tft_height - 20)
 		y += 17;
 
 	char buf[20];
 	sprintf(buf, "%7.1f\260C", temp);
-	tft_draw_string(TFT_WIDTH - 1 - strlen(buf) * 8, y - 16, 5, buf);
+	tft_draw_string(tft_width - 1 - strlen(buf) * 8, y - 16, 5, buf);
 
 	sprintf(buf, "%2.1f\260C", internal_temp);
 	tft_draw_string(0, 0, 2, buf);
 
 	sprintf(buf, "%3.0f\260C", target_temp);
-	tft_draw_string(TFT_WIDTH - 1 - 8 * strlen(buf), 0, 4, buf);
+	tft_draw_string(tft_width - 1 - 8 * strlen(buf), 0, 4, buf);
 }
 
 
@@ -156,8 +155,8 @@ static void screen_task(void)
 		/* Output the buffer. */
 		tft_sync();
 
-		/* Limit ourselves to about 60 FPS. */
-		task_sleep_us(9780);
+		/* Limit refresh frequency to about 60 FPS. */
+		task_sleep_us(9800);
 
 		/* Wait for more data. */
 		task_yield_until_ready();

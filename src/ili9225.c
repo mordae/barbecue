@@ -14,7 +14,7 @@
  * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
  */
 
-#include "ili9225.h"
+#include "tft.h"
 
 #include <pico/stdlib.h>
 #include <hardware/spi.h>
@@ -23,20 +23,6 @@
 #include <stdio.h>
 #include <string.h>
 
-
-/* Coordinates for a point. */
-struct tft_point {
-	int x, y;
-};
-
-/* Coordinates for a rectangle. */
-struct tft_rect {
-	int x0, y0;
-	int x1, y1;
-};
-
-
-enum tft_orientation tft_orientation = TFT_ROTATE_90;
 
 uint16_t tft_palette[16] = {
 	0b0000000000000000, /* black */
@@ -61,6 +47,17 @@ uint16_t tft_palette[16] = {
 	0b1000100000010001, /* dark purple */
 };
 
+#if TFT_SWAP_XY
+# define WIDTH 220
+# define HEIGHT 176
+#else
+# define WIDTH 176
+# define HEIGHT 220
+#endif
+
+const unsigned tft_width = WIDTH;
+const unsigned tft_height = HEIGHT;
+
 /*
  * We are using double buffering.
  *
@@ -69,10 +66,10 @@ uint16_t tft_palette[16] = {
  *
  * After every cycle the buffers are rotated.
  */
-static uint8_t buffer[2][TFT_HEIGHT][TFT_WIDTH >> 1];
-static uint8_t (*committed)[TFT_HEIGHT][TFT_WIDTH >> 1];
+static uint8_t buffer[2][HEIGHT * WIDTH >> 1];
+static uint8_t *committed;
 
-uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH >> 1];
+uint8_t *tft_input;
 
 extern uint8_t tft_font[256][16];
 
@@ -81,7 +78,7 @@ static int dma_ch;
 static dma_channel_config dma_conf;
 
 /* Transfer buffers. */
-static uint8_t txbuf[2][TFT_WIDTH * 2];
+static uint8_t txbuf[2][WIDTH * 2];
 
 
 inline static void select_register(void)
@@ -186,9 +183,14 @@ static void preflight()
 	sleep_ms(50);
 
 	/* Configure most of the display. */
-	set_register(0x01, 0x011c);     // 220 lines, SS=1
+	set_register(0x01, 0x001c);     // 220 lines
 	set_register(0x02, 0x0100);	// INV0=1 (3 field interlace)
-	set_register(0x03, 0x1030);	// BGR=1, AC=11
+
+	uint16_t orient = (TFT_SWAP_XY << 3)
+	                | (TFT_FLIP_Y << 4)
+	                | ((!TFT_FLIP_X) << 5);
+	set_register(0x03, 0x1000 | orient);	// BGR=1 + orient
+
 	set_register(0x07, 0x0000);	// Display off
 	set_register(0x08, 0x0808);	// Back and front porch
 	set_register(0x0b, 0x1100);	// NO=1, STD=1, RTN=0 (16 clocks per line)
@@ -232,8 +234,8 @@ static void preflight()
 void tft_init(void)
 {
 	printf("ili9225: Arrange buffers...\n");
-	tft_input = &buffer[0];
-	committed = &buffer[1];
+	tft_input = buffer[0];
+	committed = buffer[1];
 
 	printf("ili9225: Configure SPI...\n");
 
@@ -293,13 +295,11 @@ inline static uint8_t low(uint8_t x)
 
 void tft_swap_buffers(void)
 {
-	static uint8_t (*tmp)[TFT_HEIGHT][TFT_WIDTH >> 1];
+	uint8_t *tmp;
 
 	tmp       = committed;
 	committed = tft_input;
 	tft_input = tmp;
-
-	memcpy(*tft_input, *committed, sizeof(*tft_input));
 }
 
 
@@ -312,11 +312,11 @@ void tft_sync(void)
 	/* Activate GRAM write register. */
 	write_register(0x22);
 
-	for (int y = 0; y < TFT_HEIGHT; y++) {
+	for (int y = 0; y < HEIGHT; y++) {
 		uint8_t *buf = txbuf[y & 1];
 
-		for (int x = 0; x < TFT_WIDTH >> 1; x++) {
-			uint8_t twopix = (*committed)[y][x];
+		for (int x = 0; x < WIDTH >> 1; x++) {
+			uint8_t twopix = committed[y * (WIDTH >> 1) + x];
 
 			uint16_t left  = tft_palette[(twopix >> 4) & 0b1111];
 			uint16_t right = tft_palette[twopix & 0b1111];
@@ -330,7 +330,7 @@ void tft_sync(void)
 		}
 
 		/* Send the buffer out while we prepare the next one. */
-		write_buffer_dma(buf, TFT_WIDTH << 1);
+		write_buffer_dma(buf, WIDTH << 1);
 	}
 }
 
@@ -354,101 +354,29 @@ inline static int clamp(int x, int min, int max)
 }
 
 
-struct tft_point tft_point_to_phys(uint8_t x, uint8_t y)
-{
-	struct tft_point phys = {x, y};
-
-	switch (tft_orientation) {
-		case TFT_ROTATE_0:
-			break;
-
-		case TFT_ROTATE_90:
-			phys.x = y;
-			phys.y = x;
-			break;
-
-		case TFT_ROTATE_180:
-			phys.x = TFT_WIDTH - x;
-			phys.y = TFT_HEIGHT - y;
-			break;
-
-		case TFT_ROTATE_270:
-			phys.x = TFT_WIDTH - y;
-			phys.y = TFT_HEIGHT - x;
-			break;
-
-		case TFT_MIRROR_X:
-			phys.x = TFT_WIDTH - x;
-			phys.y = y;
-			break;
-
-		case TFT_MIRROR_Y:
-			phys.x = x;
-			phys.y = TFT_HEIGHT - y;
-			break;
-	}
-
-	phys.x = clamp(phys.x, 0, TFT_WIDTH - 1);
-	phys.y = clamp(phys.y, 0, TFT_HEIGHT - 1);
-
-	return phys;
-}
-
-
-struct tft_rect tft_rect_to_phys(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
-{
-	struct tft_point phys0 = tft_point_to_phys(x0, y0);
-	struct tft_point phys1 = tft_point_to_phys(x1, y1);
-	struct tft_rect phys = {
-		.x0 = phys0.x,
-		.y0 = phys0.y,
-		.x1 = phys1.x,
-		.y1 = phys1.y,
-	};
-	return phys;
-}
-
-
-void tft_draw_pixel(uint8_t x, uint8_t y, uint8_t color)
-{
-	struct tft_point phys = tft_point_to_phys(x, y);
-	uint8_t twopix = (*tft_input)[phys.y][phys.x >> 1];
-
-	if (phys.x & 1)
-		twopix = (twopix & 0b11110000) | ((color & 0b1111) << 0);
-	else
-		twopix = (twopix & 0b00001111) | ((color & 0b1111) << 4);
-
-	(*tft_input)[phys.y][phys.x >> 1] = twopix;
-}
-
-
 void tft_draw_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color)
 {
-	struct tft_rect phys = tft_rect_to_phys(x0, y0, x1, y1);
+	x0 = tft_clamp(x0, 0, WIDTH - 1);
+	x1 = tft_clamp(x1, 0, WIDTH - 1);
+	y0 = tft_clamp(y0, 0, HEIGHT - 1);
+	y1 = tft_clamp(y1, 0, HEIGHT - 1);
+	color = tft_clamp(color, 0, 0x0f);
 
-	if (phys.x0 > phys.x1) {
-		phys.x0 ^= phys.x1;
-		phys.x1 ^= phys.x0;
-		phys.x0 ^= phys.x1;
+	if (x0 > x1) {
+		x0 ^= x1;
+		x1 ^= x0;
+		x0 ^= x1;
 	}
 
-	if (phys.y0 > phys.y1) {
-		phys.y0 ^= phys.y1;
-		phys.y1 ^= phys.y0;
-		phys.y0 ^= phys.y1;
+	if (y0 > y1) {
+		y0 ^= y1;
+		y1 ^= y0;
+		y0 ^= y1;
 	}
 
-	for (int y = phys.y0; y <= phys.y1; y++) {
-		for (int x = phys.x0; x <= phys.x1; x++) {
-			uint8_t twopix = (*tft_input)[y][x >> 1];
-
-			if (x & 1)
-				twopix = (twopix & 0b11110000) | ((color & 0b1111) << 0);
-			else
-				twopix = (twopix & 0b00001111) | ((color & 0b1111) << 4);
-
-			(*tft_input)[y][x >> 1] = twopix;
+	for (int y = y0; y <= y1; y++) {
+		for (int x = x0; x <= x1; x++) {
+			tft_draw_pixel(x, y, color);
 		}
 	}
 }
@@ -457,7 +385,7 @@ void tft_draw_rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, uint8_t color
 void tft_fill(uint8_t color)
 {
 	uint8_t twopix = ((color & 0b1111) << 4) | (color & 0b1111);
-	memset(*tft_input, twopix, sizeof(*tft_input));
+	memset(tft_input, twopix, sizeof(buffer[0]));
 }
 
 

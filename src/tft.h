@@ -31,13 +31,9 @@
 # define TFT_FLIP_Y 0
 #endif
 
-#if TFT_SWAP_XY
-# define TFT_WIDTH 160
-# define TFT_HEIGHT 128
-#else
-# define TFT_WIDTH 128
-# define TFT_HEIGHT 160
-#endif
+/* TFT dimensions, driver-specific. */
+extern const unsigned tft_width;
+extern const unsigned tft_height;
 
 
 /*
@@ -88,9 +84,6 @@ extern uint8_t tft_font[256][16];
 
 /*
  * Initialize the screen.
- *
- * You must provide the Register Select GPIO pin number.
- * You can provide a RST pin number or leave it at -1.
  */
 void tft_init(void);
 
@@ -116,13 +109,42 @@ void tft_swap_sync(void);
  * Here goes whatever should be on the screen.
  * First come the Y rows, then the X columns.
  */
-extern uint8_t (*tft_input)[TFT_HEIGHT][TFT_WIDTH >> 1];
+extern uint8_t *tft_input;
+
+
+/*
+ * Helper function to clamp values.
+ */
+inline static int tft_clamp(int x, int min, int max)
+{
+	if (x < min)
+		return min;
+
+	if (x > max)
+		return max;
+
+	return x;
+}
 
 
 /*
  * Color a single pixel.
  */
-void tft_draw_pixel(uint8_t x, uint8_t y, uint8_t color);
+inline static void tft_draw_pixel(uint8_t x, uint8_t y, uint8_t color)
+{
+	x = tft_clamp(x, 0, tft_width - 1);
+	y = tft_clamp(y, 0, tft_height - 1);
+	color = tft_clamp(color, 0, 0x0f);
+
+	uint8_t twopix = tft_input[(y * tft_width + x) >> 1];
+
+	if (x & 1)
+		twopix = (twopix & 0b11110000) | ((color & 0b1111) << 0);
+	else
+		twopix = (twopix & 0b00001111) | ((color & 0b1111) << 4);
+
+	tft_input[(y * tft_width + x) >> 1] = twopix;
+}
 
 
 /*
