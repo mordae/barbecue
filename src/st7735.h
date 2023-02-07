@@ -19,30 +19,25 @@
 #include <pico/stdlib.h>
 
 
-/* Screen dimensions. */
-#define TFT_WIDTH 176
-#define TFT_HEIGHT 220
+#if !defined(TFT_SWAP_XY)
+# define TFT_SWAP_XY 0
+#endif
 
+#if !defined(TFT_FLIP_X)
+# define TFT_FLIP_X 0
+#endif
 
-/*
- * Ways the screen can be oriented.
- *
- * We can compensate when drawing and properly transform the virtual xy
- * coordinates to the real coordinates so that users don't have to.
- */
-enum tft_orientation {
-	TFT_ROTATE_0 = 0,
-	TFT_ROTATE_90,
-	TFT_ROTATE_180,
-	TFT_ROTATE_270,
-	TFT_MIRROR_X,
-	TFT_MIRROR_Y,
-};
+#if !defined(TFT_FLIP_Y)
+# define TFT_FLIP_Y 0
+#endif
 
-/*
- * Defaults to TFT_ROTATE_90, because everyone likes it wider.
- */
-extern enum tft_orientation tft_orientation;
+#if TFT_SWAP_XY
+# define TFT_WIDTH 160
+# define TFT_HEIGHT 128
+#else
+# define TFT_WIDTH 128
+# define TFT_HEIGHT 160
+#endif
 
 
 /*

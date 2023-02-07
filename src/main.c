@@ -22,20 +22,22 @@
 #include <tusb.h>
 #include <math.h>
 
-#include "ili9225.h"
+//#include "ili9225.h"
+#include "st7735.h"
+
 #include "renc.h"
 #include "task.h"
-
-
-/* Because the screen is rotated. */
-#define WIDTH TFT_HEIGHT
-#define HEIGHT TFT_WIDTH
 
 
 static task_t screen_task_id;
 static task_t tsense_task_id;
 static task_t input_task_id;
+static task_t control_task_id;
 static task_t stats_task_id;
+
+
+static double target_temp = 0;
+static double internal_temp = 25;
 
 
 static void pwm123_init(void)
@@ -65,19 +67,19 @@ static void tsense_init(void)
 }
 
 
-static void tsense_select(void)
-{
-#if TSENSE_PIN == 26
-	adc_select_input(0);
-#elif TSENSE_PIN == 27
-	adc_select_input(1);
-#elif TSENSE_PIN == 28
-	adc_select_input(2);
-#elif TSENSE_PIN == 29
-	adc_select_input(3);
-#else
-# error "Selected TSENSE_PIN is not an ADC input!"
+#if (TSENSE_PIN < 26) || (TSENSE_PIN > 29)
+# error "TSENSE_PIN must be a valid ADC pin"
 #endif
+
+static void select_tsense(void)
+{
+	adc_select_input(TSENSE_PIN - 26);
+}
+
+
+static void select_internal(void)
+{
+	adc_select_input(4);
 }
 
 
@@ -88,11 +90,8 @@ inline static int wrap(int x, int limit)
 
 
 /* History of temperatures. */
-static double history[WIDTH] = {0.0};
+static double history[TFT_WIDTH] = {0.0};
 static unsigned history_offset = 0;
-
-
-#define SPARKLINE_HEIGHT 88
 
 
 static void update_sparkline(double temp)
@@ -103,15 +102,12 @@ static void update_sparkline(double temp)
 
 	temp_avg = 0.99 * temp_avg + 0.01 * temp;
 
-	history_offset = wrap(history_offset + 1, WIDTH);
+	history_offset = wrap(history_offset + 1, TFT_WIDTH);
 	history[history_offset] = temp;
-
-	/* Draw slightly lighter sparkline background. */
-	tft_draw_rect(0, HEIGHT - SPARKLINE_HEIGHT - 1, WIDTH - 1, HEIGHT - 1, 1);
 
 	double temp_min = 1000, temp_max = 0;
 
-	for (int i = 0; i < WIDTH; i++) {
+	for (int i = 0; i < TFT_WIDTH; i++) {
 		temp_min = fmin(temp_min, history[i]);
 		temp_max = fmax(temp_max, history[i]);
 	}
@@ -122,59 +118,35 @@ static void update_sparkline(double temp)
 	temp_min = fmin(fmin(temp_min_avg, temp_min), temp_avg - 0.5);
 	temp_max = fmax(fmax(temp_max_avg, temp_max), temp_avg + 0.5);
 
-	for (int i = 0; i < WIDTH; i++) {
-		int h = wrap(history_offset + 1 + i, WIDTH);
+	for (int i = 0; i < TFT_WIDTH; i++) {
+		int h = wrap(history_offset + 1 + i, TFT_WIDTH);
 		double temp_adj = (history[h] - temp_min) / (temp_max - temp_min);
-		int y = wrap((SPARKLINE_HEIGHT - 1) * temp_adj, SPARKLINE_HEIGHT);
-
-		tft_draw_pixel(i, HEIGHT - SPARKLINE_HEIGHT - 1 + y, 7);
+		int y = (TFT_HEIGHT - 1) * temp_adj;
+		tft_draw_pixel(i, y, 7);
 	}
 
 	double avg = (temp_avg - temp_min) / (temp_max - temp_min);
-	int y = HEIGHT - SPARKLINE_HEIGHT - 1 + wrap((SPARKLINE_HEIGHT - 1) * avg, SPARKLINE_HEIGHT);
+	int y = (TFT_HEIGHT - 1) * avg;
+	tft_draw_rect(0, y, TFT_WIDTH - 1, y, 5);
 
-	tft_draw_rect(0, y, WIDTH - 1, y, 5);
-
-	if (y < HEIGHT - 20)
+	if (y < TFT_HEIGHT - 20)
 		y += 17;
 
 	char buf[20];
-	sprintf(buf, "%7.1f \260C", temp);
-	tft_draw_string(WIDTH - 1 - strlen(buf) * 8, y - 16, 5, buf);
+	sprintf(buf, "%7.1f\260C", temp);
+	tft_draw_string(TFT_WIDTH - 1 - strlen(buf) * 8, y - 16, 5, buf);
+
+	sprintf(buf, "%2.1f\260C", internal_temp);
+	tft_draw_string(0, 0, 2, buf);
+
+	sprintf(buf, "%3.0f\260C", target_temp);
+	tft_draw_string(TFT_WIDTH - 1 - 8 * strlen(buf), 0, 4, buf);
 }
 
 
 static void screen_task(void)
 {
-	uint64_t last_frame = 0;
-	uint64_t diff_time = 0;
-	unsigned frame_no = 0;
-	unsigned fps = 60;
-
-	const unsigned target_fps = 30;
-	int sleep = 20000;
-
 	while (true) {
-		uint64_t now = time_us_64();
-		diff_time += now - last_frame;
-		last_frame = now;
-		frame_no++;
-
-		if (diff_time >= 500000) {
-			fps = frame_no * 2;
-			diff_time = 0;
-			frame_no = 0;
-
-			if (fps != target_fps) {
-				int delta = fps - target_fps;
-				sleep += 100 * delta;
-			}
-		}
-
-		char buf[20];
-		sprintf(buf, "%u fps", fps);
-		tft_draw_string(0, 0, 3, buf);
-
 		/* Commit the screen buffer. */
 		tft_swap_buffers();
 
@@ -184,9 +156,8 @@ static void screen_task(void)
 		/* Output the buffer. */
 		tft_sync();
 
-		/* Insert delay to control FPS. */
-		if (sleep > 0)
-			task_sleep_us(sleep);
+		/* Limit ourselves to about 60 FPS. */
+		task_sleep_us(9780);
 
 		/* Wait for more data. */
 		task_yield_until_ready();
@@ -194,13 +165,19 @@ static void screen_task(void)
 }
 
 
-inline static double voltage_to_temp(double v)
+inline static double tsense_to_temp(double v)
 {
 	double a = -20.960;
 	double b = 115.584;
 	double c = -234.160;
 	double d = 244.833;
 	return (v * v * v * a) + (v * v * b) + (v * c) + d;
+}
+
+
+inline static double internal_to_temp(double v)
+{
+	return 27.0 - (v - 0.598) / 0.001721;
 }
 
 
@@ -211,6 +188,25 @@ static void tsense_task(void)
 
 	while (true) {
 		unsigned raw_temp = 0;
+
+		select_internal();
+
+		/* Get rid of residual charge. */
+		for (int i = 0; i < 32; i++)
+			(void)adc_read();
+
+		for (int i = 0; i < 256; i++)
+			raw_temp += adc_read();
+
+		double itemp = internal_to_temp(raw_temp * 3.3 / 256.0 / 4096.0);
+		internal_temp = internal_temp * 0.975 + itemp * 0.025;
+
+		raw_temp = 0;
+		select_tsense();
+
+		/* Get rid of residual charge. */
+		for (int i = 0; i < 32; i++)
+			(void)adc_read();
 
 		// 8 + 12 bits = 20 bits
 		for (int i = 0; i < 256; i++)
@@ -224,30 +220,10 @@ static void tsense_task(void)
 
 		// 16 bits to 32 bits to 16 bits
 		unsigned mv_temp = raw_temp_avg * 33000 >> 16;
-
-		double temp = voltage_to_temp(mv_temp / 10000.0);
-
-		if (temp < 30.0) {
-			gpio_put(HEAT_PIN, 1);
-		} else {
-			gpio_put(HEAT_PIN, 0);
-		}
-
-		if (temp > 25.0) {
-			gpio_put(FAN1_PIN, 1);
-		} else {
-			gpio_put(FAN1_PIN, 0);
-		}
+		double temp = tsense_to_temp(mv_temp / 10000.0);
 
 		tft_fill(0);
 		update_sparkline(temp);
-
-		char buf[20];
-		sprintf(buf, "%4u.%u mV", mv_temp / 10, mv_temp % 10);
-		tft_draw_string(70, 16 * 4, 3, buf);
-
-		sprintf(buf, "%6.1f \260C", temp);
-		tft_draw_string(70, 16 * 3, 3, buf);
 
 		/* Unblock the display output task. */
 		task_set_ready(screen_task_id);
@@ -267,8 +243,47 @@ static void input_task(void)
 	while (true) {
 		struct renc_event event;
 		renc_read_blocking(&event);
-		printf("RE: num=%u sw=%u steps=%i\n",
-		       event.num, event.sw, event.steps);
+
+		if (event.steps) {
+			target_temp += event.steps;
+
+			if (target_temp > 230)
+				target_temp = 230;
+			else if (target_temp < 0)
+				target_temp = 0;
+
+			if (target_temp < internal_temp)
+				target_temp = ceil(internal_temp);
+		}
+	}
+}
+
+
+static void control_task(void)
+{
+	while (true) {
+		double temp = history[history_offset];
+
+		if (target_temp < internal_temp)
+			target_temp = ceil(internal_temp);
+
+		if (temp < target_temp) {
+			gpio_put(HEAT_PIN, 1);
+		} else {
+			gpio_put(HEAT_PIN, 0);
+		}
+
+		if (temp > target_temp + 5) {
+			gpio_put(FAN1_PIN, 1);
+			gpio_put(FAN2_PIN, 1);
+		} else {
+			gpio_put(FAN1_PIN, 0);
+			gpio_put(FAN2_PIN, 0);
+		}
+
+		/* Run at approximately 200 Hz.
+		 * AC mains relay can't switch faster than 60 Hz anyway. */
+		task_sleep_ms(5);
 	}
 }
 
@@ -311,7 +326,7 @@ int main()
 
 	/* Initialize the temperature probe. */
 	tsense_init();
-	tsense_select();
+	select_tsense();
 
 	/* Draws user interface on the screen.
 	 * Starts not-ready, woken up by tsense_task.
@@ -335,6 +350,12 @@ int main()
 	task_set_name(stats_task_id, "stats");
 	task_set_ready(stats_task_id);
 	task_set_priority(stats_task_id, 1);
+
+	/* Controls heating element and fans. */
+	control_task_id = task_create(control_task, 1024);
+	task_set_name(control_task_id, "control");
+	task_set_ready(control_task_id);
+	task_set_priority(control_task_id, 2);
 
 	/* Run tasks on the second core. */
 	multicore_reset_core1();

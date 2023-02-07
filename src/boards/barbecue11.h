@@ -30,7 +30,7 @@
 #define RENC_CW_PIN 9
 #define RENC_CCW_PIN 10
 #define RENC_SW_PIN 11
-#define RENC_SENS 20
+#define RENC_SENS 10
 
 /* TFT Screen */
 #define TFT_CS_PIN 21
@@ -38,17 +38,13 @@
 #define TFT_MOSI_PIN 23
 #define TFT_RS_PIN 24
 #define TFT_RST_PIN 25
+
+#define TFT_SWAP_XY 1
+#define TFT_FLIP_X 0
+#define TFT_FLIP_Y 0
 #define TFT_SPI_DEV spi0
 
 /* Other TFT parameters. */
-#if !defined(TFT_WIDTH)
-# define TFT_WIDTH 176
-#endif
-
-#if !defined(TFT_HEIGHT)
-# define TFT_HEIGHT 220
-#endif
-
 #if !defined(TFT_BAUDRATE)
 # define TFT_BAUDRATE (64 * 1000 * 1000)
 #endif

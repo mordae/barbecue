@@ -1,4 +1,7 @@
-add_executable(barbecue main.c ili9225.c font.c task.c renc.c scene.c)
+#set(DISPLAY ili9225)
+set(DISPLAY st7735)
+
+add_executable(barbecue main.c ${DISPLAY}.c font.c task.c renc.c scene.c)
 
 target_link_libraries(barbecue
                       pico_stdlib
