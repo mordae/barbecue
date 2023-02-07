@@ -1,14 +1,12 @@
-SET(DISPLAY "st7735" CACHE STRING "Display type: ili9925 or st7735")
-SET_PROPERTY(CACHE DISPLAY PROPERTY STRINGS ili9925 st7735)
-
-add_executable(barbecue main.c ${DISPLAY}.c font.c task.c renc.c scene.c)
+add_executable(barbecue main.c task.c renc.c scene.c)
 
 target_link_libraries(barbecue
+                      pico_tft
                       pico_stdlib
                       pico_util
                       pico_sync
                       pico_divider
-		      pico_multicore
+                      pico_multicore
                       hardware_adc
                       hardware_spi
                       hardware_dma

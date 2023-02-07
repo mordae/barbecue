@@ -22,7 +22,7 @@
 #include <tusb.h>
 #include <math.h>
 
-#include "tft.h"
+#include <tft.h>
 
 #include "renc.h"
 #include "task.h"

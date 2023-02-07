@@ -1,0 +1,3 @@
+[submodule "vendor/pico-tft"]
+	path = vendor/pico-tft
+	url = https://github.com/mordae/pico-tft.git
