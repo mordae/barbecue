@@ -250,9 +250,6 @@ static void input_task(void)
 				target_temp = 230;
 			else if (target_temp < 0)
 				target_temp = 0;
-
-			if (target_temp < internal_temp)
-				target_temp = ceil(internal_temp);
 		}
 	}
 }
@@ -262,17 +259,15 @@ static void control_task(void)
 {
 	while (true) {
 		double temp = history[history_offset];
+		double tt = fmax(internal_temp, target_temp);
 
-		if (target_temp < internal_temp)
-			target_temp = ceil(internal_temp);
-
-		if (temp < target_temp) {
+		if (temp < tt) {
 			gpio_put(HEAT_PIN, 1);
 		} else {
 			gpio_put(HEAT_PIN, 0);
 		}
 
-		if (temp > target_temp + 5) {
+		if (temp > tt + 5) {
 			gpio_put(FAN1_PIN, 1);
 			gpio_put(FAN2_PIN, 1);
 		} else {
